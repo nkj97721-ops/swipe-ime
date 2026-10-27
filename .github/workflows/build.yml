@@ -1,0 +1,1169 @@
+name: build-swipe-ime
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Install SDK platform
+        run: |
+          SDKM=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | head -n1)
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+      - name: Generate project
+        run: |
+          cat > settings.gradle.kts <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "SwipeIme"
+          include(":app")
+          EOF
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+          }
+          EOF
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx3g
+          EOF
+          mkdir -p app
+          cat > app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "ime.swipe"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "ime.swipe"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "0.1"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+          }
+          EOF
+          mkdir -p app/src/main
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:label="滑行输入法"
+                  android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+                  <service
+                      android:name="ime.swipe.SwipeIme"
+                      android:label="滑行输入法"
+                      android:exported="true"
+                      android:permission="android.permission.BIND_INPUT_METHOD">
+                      <intent-filter>
+                          <action android:name="android.view.InputMethod" />
+                      </intent-filter>
+                      <meta-data
+                          android:name="android.view.im"
+                          android:resource="@xml/method" />
+                  </service>
+                  <activity
+                      android:name="ime.swipe.MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+          mkdir -p app/src/main/res/xml
+          cat > app/src/main/res/xml/method.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <input-method xmlns:android="http://schemas.android.com/apk/res/android" />
+          EOF
+          mkdir -p app/src/main/java/swipe/trail
+          cat > app/src/main/java/swipe/trail/SwipeTrail.kt <<'EOF'
+          package swipe.trail
+
+          import android.graphics.Canvas
+          import android.graphics.Color
+          import android.graphics.Paint
+          import android.graphics.Path
+          import android.graphics.PorterDuff
+          import android.graphics.PorterDuffXfermode
+          import kotlin.math.max
+          import kotlin.math.pow
+          import kotlin.math.roundToInt
+
+          /**
+           * 滑行轨迹渲染 参数来自调参页定稿
+           * 用法:
+           *   触摸: down(x, y, t) / move(x, y, t) / up(t)   t 用 event.eventTime
+           *   绘制: 在键盘视图 onDraw 末尾调用 if (trail.draw(canvas, SystemClock.uptimeMillis())) postInvalidateOnAnimation()
+           */
+          class SwipeTrail(density: Float) {
+              private object P {
+                  const val HEAD_DP = 16f   // 头部线宽
+                  const val OPACITY = 0.30f // 不透明度
+                  const val TAIL = 0f       // 尾部线宽比例
+                  const val LIFE_MS = 150f  // 存活时长
+                  const val FADE = 0.3f     // 渐隐曲线
+                  const val TAPER = 2f      // 变细曲线
+                  const val LIFT = 8f       // 抬手后渐隐倍速
+              }
+
+              /** 可运行时调整 默认是定稿值 */
+              var opacity: Float = P.OPACITY
+
+              private class Pt(val x: Float, val y: Float, val t: Long)
+
+              private val pts = ArrayList<Pt>()
+              private var upAt = 0L
+              private val headPx = P.HEAD_DP * density
+              private val path = Path()
+              private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                  style = Paint.Style.STROKE
+                  strokeCap = Paint.Cap.ROUND
+                  strokeJoin = Paint.Join.ROUND
+                  color = Color.WHITE
+                  // SRC 让新一段直接覆盖旧段 避免半透明叠加出现珠点
+                  xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC)
+              }
+
+              fun down(x: Float, y: Float, t: Long) { pts.clear(); upAt = 0L; pts.add(Pt(x, y, t)) }
+              fun move(x: Float, y: Float, t: Long) { pts.add(Pt(x, y, t)) }
+              fun up(t: Long) { upAt = t }
+
+              /** 返回 true 表示动画未结束 调用方需继续刷新 */
+              fun draw(c: Canvas, now: Long): Boolean {
+                  if (pts.isEmpty()) return false
+                  val extra = if (upAt > 0) (now - upAt) * (P.LIFT - 1f) else 0f
+                  fun age(p: Pt) = (now - p.t) + extra
+                  while (pts.isNotEmpty() && age(pts[0]) > P.LIFE_MS) pts.removeAt(0)
+                  if (pts.size < 2) return pts.isNotEmpty() && upAt == 0L
+
+                  val layer = c.saveLayer(null, null)
+                  for (i in 1 until pts.size) {
+                      val p = pts[i]
+                      val ax: Float
+                      val ay: Float
+                      if (i > 1) { ax = (pts[i - 1].x + p.x) / 2; ay = (pts[i - 1].y + p.y) / 2 } else { ax = pts[0].x; ay = pts[0].y }
+                      val bx: Float
+                      val by: Float
+                      if (i < pts.size - 1) { bx = (p.x + pts[i + 1].x) / 2; by = (p.y + pts[i + 1].y) / 2 } else { bx = p.x; by = p.y }
+                      val k = max(0f, 1f - age(p) / P.LIFE_MS)
+                      paint.strokeWidth = headPx * (P.TAIL + (1f - P.TAIL) * k.pow(P.TAPER))
+                      paint.alpha = (255f * opacity * k.pow(P.FADE)).roundToInt().coerceIn(0, 255)
+                      path.rewind()
+                      path.moveTo(ax, ay)
+                      path.quadTo(p.x, p.y, bx, by)
+                      c.drawPath(path, paint)
+                  }
+                  c.restoreToCount(layer)
+                  return true
+              }
+          }
+          EOF
+          mkdir -p app/src/main/java/ime/swipe
+          cat > app/src/main/java/ime/swipe/Lexicon.kt <<'EOF'
+          package ime.swipe
+
+          import android.content.Context
+          import kotlin.math.ln
+
+          class Cand(val text: String, val used: Int)
+
+          /** 词库 assets/lex.txt 每行: 拼音(无空格) TAB 词 TAB 权重 已按 拼音升序 权重降序 排好 */
+          class Lexicon {
+              @Volatile
+              var ready = false
+
+              private var py: Array<String> = emptyArray()
+              private var wd: Array<String> = emptyArray()
+              private var wt: IntArray = IntArray(0)
+
+              /** 去重后的拼音串 供滑行匹配 */
+              var upy: Array<String> = emptyArray()
+              var uw: IntArray = IntArray(0)
+              var maxW: Int = 1
+              private val bStart = IntArray(27)
+
+              fun load(ctx: Context) {
+                  val pl = ArrayList<String>(220000)
+                  val wl = ArrayList<String>(220000)
+                  val tl = ArrayList<Int>(220000)
+                  ctx.assets.open("lex.txt").bufferedReader(Charsets.UTF_8).useLines { lines ->
+                      for (line in lines) {
+                          val a = line.indexOf('\t')
+                          if (a <= 0) continue
+                          val b = line.indexOf('\t', a + 1)
+                          if (b < 0) continue
+                          pl.add(line.substring(0, a))
+                          wl.add(line.substring(a + 1, b))
+                          tl.add(line.substring(b + 1).toIntOrNull() ?: 1)
+                      }
+                  }
+                  py = pl.toTypedArray()
+                  wd = wl.toTypedArray()
+                  wt = tl.toIntArray()
+
+                  val up = ArrayList<String>()
+                  val uwl = ArrayList<Int>()
+                  var prev = ""
+                  var mx = 1
+                  for (k in py.indices) {
+                      if (py[k] != prev) {
+                          up.add(py[k])
+                          uwl.add(wt[k])
+                          prev = py[k]
+                      }
+                      if (wt[k] > mx) mx = wt[k]
+                  }
+                  upy = up.toTypedArray()
+                  uw = uwl.toIntArray()
+                  maxW = mx
+
+                  var i = 0
+                  for (f in 0 until 26) {
+                      bStart[f] = i
+                      while (i < upy.size && (upy[i][0] - 'a') == f) i++
+                  }
+                  bStart[26] = upy.size
+                  ready = true
+              }
+
+              fun bucket(s: Int): IntRange = bStart[s] until bStart[s + 1]
+
+              /** 第一个 py >= s 的下标 */
+              private fun lower(s: String): Int {
+                  var lo = 0
+                  var hi = py.size
+                  while (lo < hi) {
+                      val m = (lo + hi) ushr 1
+                      if (py[m] < s) lo = m + 1 else hi = m
+                  }
+                  return lo
+              }
+
+              private fun score(i: Int, len: Int): Float {
+                  return ln(1f + wt[i].toFloat()) + (if (py[i].length == len) 2f else 0f)
+              }
+
+              /** 敲字候选 整串匹配与补全混排 之后是只消耗前缀的分段候选 */
+              fun candidates(s: String): List<Cand> {
+                  if (!ready || s.isEmpty()) return emptyList()
+                  val out = ArrayList<Cand>()
+                  val seen = HashSet<String>()
+
+                  val idxs = ArrayList<Int>()
+                  var i = lower(s)
+                  while (i < py.size && idxs.size < 300 && py[i].startsWith(s)) {
+                      idxs.add(i)
+                      i++
+                  }
+                  val sorted = idxs.sortedByDescending { score(it, s.length) }
+                  for (k in sorted) {
+                      if (out.size >= 24) break
+                      if (seen.add(wd[k] + "#" + s.length)) out.add(Cand(wd[k], s.length))
+                  }
+
+                  var len = s.length - 1
+                  while (len >= 1 && out.size < 40) {
+                      val p = s.substring(0, len)
+                      var j = lower(p)
+                      var c = 0
+                      while (j < py.size && py[j] == p && c < 3) {
+                          if (seen.add(wd[j] + "#" + len)) out.add(Cand(wd[j], len))
+                          j++
+                          c++
+                      }
+                      len--
+                  }
+                  return out
+              }
+
+              /** 某个完整拼音对应的词 按权重取前 n 个 */
+              fun wordsFor(p: String, n: Int): List<String> {
+                  val out = ArrayList<String>()
+                  var j = lower(p)
+                  while (j < py.size && py[j] == p && out.size < n) {
+                      out.add(wd[j])
+                      j++
+                  }
+                  return out
+              }
+          }
+          EOF
+          mkdir -p app/src/main/java/ime/swipe
+          cat > app/src/main/java/ime/swipe/GlideDecoder.kt <<'EOF'
+          package ime.swipe
+
+          import kotlin.math.hypot
+          import kotlin.math.ln
+
+          /** 滑行解码 把划动路径与词库拼音串做形状匹配 */
+          class GlideDecoder(private val lex: Lexicon) {
+              class Hit(val py: String, val score: Float)
+
+              private var cx = FloatArray(26)
+              private var cy = FloatArray(26)
+              private var kw = 100f
+
+              private val np = 32
+              private val sx = FloatArray(np)
+              private val sy = FloatArray(np)
+              private val ux = FloatArray(np)
+              private val uy = FloatArray(np)
+              private val ix = FloatArray(64)
+              private val iy = FloatArray(64)
+
+              fun setLayout(x: FloatArray, y: FloatArray, keyWidth: Float) {
+                  cx = x.copyOf()
+                  cy = y.copyOf()
+                  kw = keyWidth
+              }
+
+              /** 重采样为 np 个等弧长点 返回总长度 */
+              private fun resample(xs: FloatArray, ys: FloatArray, n: Int, ox: FloatArray, oy: FloatArray): Float {
+                  var total = 0f
+                  for (i in 1 until n) total += hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1])
+                  if (n < 2 || total < 0.001f) {
+                      for (k in 0 until np) {
+                          ox[k] = xs[0]
+                          oy[k] = ys[0]
+                      }
+                      return 0f
+                  }
+                  var seg = 1
+                  var acc = 0f
+                  var segLen = hypot(xs[1] - xs[0], ys[1] - ys[0])
+                  for (k in 0 until np) {
+                      val target = total * k / (np - 1)
+                      while (seg < n - 1 && acc + segLen < target) {
+                          acc += segLen
+                          seg++
+                          segLen = hypot(xs[seg] - xs[seg - 1], ys[seg] - ys[seg - 1])
+                      }
+                      val t = if (segLen > 0.000001f) ((target - acc) / segLen).coerceIn(0f, 1f) else 0f
+                      ox[k] = xs[seg - 1] + (xs[seg] - xs[seg - 1]) * t
+                      oy[k] = ys[seg - 1] + (ys[seg] - ys[seg - 1]) * t
+                  }
+                  return total
+              }
+
+              /** 距离 (x y) 在 1.5 个键宽以内的字母 一个都没有则取最近的 */
+              private fun near(x: Float, y: Float): BooleanArray {
+                  val r = BooleanArray(26)
+                  var best = 0
+                  var bd = Float.MAX_VALUE
+                  var any = false
+                  for (k in 0 until 26) {
+                      val d = hypot(cx[k] - x, cy[k] - y)
+                      if (d < bd) {
+                          bd = d
+                          best = k
+                      }
+                      if (d < 1.5f * kw) {
+                          r[k] = true
+                          any = true
+                      }
+                  }
+                  if (!any) r[best] = true
+                  return r
+              }
+
+              fun decode(xs: FloatArray, ys: FloatArray, n: Int, top: Int): List<Hit> {
+                  if (!lex.ready || n < 2) return emptyList()
+                  val lin = resample(xs, ys, n, sx, sy)
+                  if (lin < kw * 0.8f) return emptyList()
+                  val starts = near(xs[0], ys[0])
+                  val ends = near(xs[n - 1], ys[n - 1])
+                  val maxLn = ln(1f + lex.maxW.toFloat())
+                  val best = ArrayList<Hit>()
+
+                  for (s in 0 until 26) {
+                      if (!starts[s]) continue
+                      for (idx in lex.bucket(s)) {
+                          val w = lex.upy[idx]
+                          val len = w.length
+                          if (len < 2 || len > 24) continue
+                          if (!ends[w[len - 1] - 'a']) continue
+
+                          var m = 0
+                          var prev = -1
+                          for (ch in w) {
+                              val k = ch - 'a'
+                              if (k == prev) continue
+                              prev = k
+                              ix[m] = cx[k]
+                              iy[m] = cy[k]
+                              m++
+                          }
+                          if (m < 2) continue
+                          val lid = resample(ix, iy, m, ux, uy)
+                          if (lin < 0.55f * lid - kw || lin > 1.8f * lid + kw) continue
+
+                          var d = 0f
+                          for (k in 0 until np) d += hypot(sx[k] - ux[k], sy[k] - uy[k])
+                          d /= (np * kw)
+                          if (d > 1.5f) continue
+                          val prior = ln(1f + lex.uw[idx].toFloat()) / maxLn
+                          val score = d + 0.7f * (1f - prior)
+                          if (best.size >= top && score >= best[best.size - 1].score) continue
+
+                          var pos = best.size
+                          while (pos > 0 && best[pos - 1].score > score) pos--
+                          best.add(pos, Hit(w, score))
+                          if (best.size > top) best.removeAt(best.size - 1)
+                      }
+                  }
+                  return best
+              }
+          }
+          EOF
+          mkdir -p app/src/main/java/ime/swipe
+          cat > app/src/main/java/ime/swipe/KeyboardView.kt <<'EOF'
+          package ime.swipe
+
+          import android.content.Context
+          import android.graphics.Canvas
+          import android.graphics.Color
+          import android.graphics.Paint
+          import android.graphics.Path
+          import android.os.Handler
+          import android.os.Looper
+          import android.os.SystemClock
+          import android.view.HapticFeedbackConstants
+          import android.view.MotionEvent
+          import android.view.View
+          import swipe.trail.SwipeTrail
+          import kotlin.math.hypot
+
+          private enum class Kind { LETTER, BACK, SPACE, ENTER, TEXT, TO_NUM, TO_SYM, TO_LETTERS, COMMA }
+
+          private class Key(
+              val label: String,
+              val kind: Kind,
+              val value: String,
+              val l: Float,
+              val t: Float,
+              val r: Float,
+              val b: Float
+          ) {
+              fun hit(x: Float, y: Float): Boolean = x >= l && x < r && y >= t && y < b
+          }
+
+          private enum class Panel { LETTERS, NUM, SYM }
+
+          class KeyboardView(
+              ctx: Context,
+              private val host: KeyboardView.Host,
+              private val decoder: GlideDecoder
+          ) : View(ctx) {
+
+              interface Host {
+                  fun onLetter(c: Char)
+                  fun onBackspace()
+                  fun onSpace()
+                  fun onEnter()
+                  fun onText(s: String)
+                  fun onGlide(xs: FloatArray, ys: FloatArray, n: Int)
+              }
+
+              private val dp = resources.displayMetrics.density
+              private val trail = SwipeTrail(dp)
+              private val uiHandler = Handler(Looper.getMainLooper())
+
+              private val lettersKeys = ArrayList<Key>()
+              private val numKeys = ArrayList<Key>()
+              private val symKeys = ArrayList<Key>()
+              private var panel = Panel.LETTERS
+              private var numLeftW = 0f
+              private var rowH = 0f
+              private var gthr = 30f
+
+              private val big = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textAlign = Paint.Align.CENTER }
+              private val mid = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textAlign = Paint.Align.CENTER }
+              private val small = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(170, 170, 170); textAlign = Paint.Align.CENTER }
+              private val hl = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x2EFFFFFF }
+              private val icon = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                  color = Color.WHITE
+                  style = Paint.Style.STROKE
+                  strokeCap = Paint.Cap.ROUND
+                  strokeJoin = Paint.Join.ROUND
+              }
+              private val box = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                  color = Color.rgb(58, 58, 58)
+                  style = Paint.Style.STROKE
+              }
+              private val path = Path()
+
+              // 触摸状态
+              private var downKey: Key? = null
+              private var pressedKey: Key? = null
+              private var dx = 0f
+              private var dy = 0f
+              private var glide = false
+              private var swipedUp = false
+              private var fed = 0
+              private var n = 0
+              private val px = FloatArray(1024)
+              private val py = FloatArray(1024)
+              private val pt = LongArray(1024)
+
+              private val repeater = object : Runnable {
+                  override fun run() {
+                      host.onBackspace()
+                      uiHandler.postDelayed(this, 50)
+                  }
+              }
+
+              override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
+                  super.onSizeChanged(w, h, ow, oh)
+                  buildKeys(w.toFloat(), h.toFloat())
+              }
+
+              private fun buildKeys(w: Float, h: Float) {
+                  val rh = h / 4f
+                  val kw = w / 10f
+                  rowH = rh
+                  gthr = 0.55f * kw
+                  big.textSize = 0.058f * w
+                  mid.textSize = 0.042f * w
+                  small.textSize = 0.032f * w
+                  box.strokeWidth = 1.5f * dp
+                  icon.strokeWidth = 2.2f * dp
+                  lettersKeys.clear()
+                  numKeys.clear()
+                  symKeys.clear()
+
+                  // 字母面板
+                  val rows = arrayOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
+                  val offs = floatArrayOf(0f, 0.5f * kw, 1.5f * kw)
+                  val cx = FloatArray(26)
+                  val cy = FloatArray(26)
+                  for (r in 0..2) {
+                      val row = rows[r]
+                      for (i in row.indices) {
+                          val l = offs[r] + i * kw
+                          lettersKeys.add(Key(row[i].uppercaseChar().toString(), Kind.LETTER, row[i].toString(), l, r * rh, l + kw, (r + 1) * rh))
+                          val idx = row[i] - 'a'
+                          cx[idx] = l + kw / 2f
+                          cy[idx] = r * rh + rh / 2f
+                      }
+                  }
+                  decoder.setLayout(cx, cy, kw)
+                  lettersKeys.add(Key("", Kind.BACK, "", 8.5f * kw, 2 * rh, w, 3 * rh))
+                  lettersKeys.add(Key("123", Kind.TO_NUM, "", 0f, 3 * rh, 0.2f * w, 4 * rh))
+                  lettersKeys.add(Key("，", Kind.COMMA, "", 0.2f * w, 3 * rh, 0.3f * w, 4 * rh))
+                  lettersKeys.add(Key("", Kind.SPACE, " ", 0.3f * w, 3 * rh, 0.8f * w, 4 * rh))
+                  lettersKeys.add(Key("换行", Kind.ENTER, "", 0.8f * w, 3 * rh, w, 4 * rh))
+
+                  // 九键数字面板
+                  val lw = 0.186f * w
+                  val mw = 0.2093f * w
+                  val x1 = lw
+                  val x2 = lw + mw
+                  val x3 = lw + 2 * mw
+                  val x4 = lw + 3 * mw
+                  numLeftW = lw
+                  val left = arrayOf("@", "%", "-", "+")
+                  val sh = 0.726f * rh
+                  for (i in 0..3) numKeys.add(Key(left[i], Kind.TEXT, left[i], 0f, i * sh, lw, (i + 1) * sh))
+                  numKeys.add(Key("", Kind.TO_LETTERS, "", 0f, 4 * sh, lw, 4 * rh))
+                  val digs = arrayOf("1", "2", "3", "4", "5", "6", "7", "8", "9")
+                  for (r in 0..2) {
+                      for (c in 0..2) {
+                          val d = digs[r * 3 + c]
+                          numKeys.add(Key(d, Kind.TEXT, d, x1 + c * mw, r * rh, x1 + (c + 1) * mw, (r + 1) * rh))
+                      }
+                  }
+                  numKeys.add(Key("符号", Kind.TO_SYM, "", x1, 3 * rh, x2, 4 * rh))
+                  numKeys.add(Key("0", Kind.TEXT, "0", x2, 3 * rh, x3, 4 * rh))
+                  numKeys.add(Key(".", Kind.TEXT, ".", x3, 3 * rh, x4, 4 * rh))
+                  numKeys.add(Key("", Kind.BACK, "", x4, 0f, w, rh))
+                  numKeys.add(Key("空格", Kind.SPACE, " ", x4, rh, w, 2 * rh))
+                  numKeys.add(Key("换行", Kind.ENTER, "", x4, 3 * rh, w, 4 * rh))
+
+                  // 符号面板
+                  val r1 = arrayOf("_", "—", ";", "#", "%", "&", "^", "*", "+", "=")
+                  val v1 = arrayOf("_", "——", ";", "#", "%", "&", "^", "*", "+", "=")
+                  val r2 = arrayOf("-", "/", ":", "～", "(", ")", "…", "@", "“", "”")
+                  val v2 = arrayOf("-", "/", ":", "～", "(", ")", "……", "@", "“", "”")
+                  for (i in 0..9) {
+                      symKeys.add(Key(r1[i], Kind.TEXT, v1[i], i * kw, 0f, (i + 1) * kw, rh))
+                      symKeys.add(Key(r2[i], Kind.TEXT, v2[i], i * kw, rh, (i + 1) * kw, 2 * rh))
+                  }
+                  val c0 = 0.1528f * w
+                  val cw = 0.1157f * w
+                  symKeys.add(Key("123", Kind.TO_NUM, "", 0f, 2 * rh, c0, 3 * rh))
+                  val r3 = arrayOf("。", "，", "、", "？", "！", ".")
+                  for (i in 0..5) symKeys.add(Key(r3[i], Kind.TEXT, r3[i], c0 + i * cw, 2 * rh, c0 + (i + 1) * cw, 3 * rh))
+                  symKeys.add(Key("", Kind.BACK, "", 0.8472f * w, 2 * rh, w, 3 * rh))
+                  symKeys.add(Key("", Kind.TO_LETTERS, "", 0.011f * w, 3 * rh, 0.133f * w, 4 * rh))
+              }
+
+              private fun cur(): List<Key> = when (panel) {
+                  Panel.LETTERS -> lettersKeys
+                  Panel.NUM -> numKeys
+                  Panel.SYM -> symKeys
+              }
+
+              private fun findKey(x: Float, y: Float): Key? {
+                  for (k in cur()) if (k.hit(x, y)) return k
+                  return null
+              }
+
+              // ---------- 绘制 ----------
+
+              private fun text(c: Canvas, s: String, x: Float, y: Float, p: Paint) {
+                  c.drawText(s, x, y - (p.ascent() + p.descent()) / 2f, p)
+              }
+
+              private fun drawBackspace(c: Canvas, cx: Float, cy: Float) {
+                  val s = 0.027f * width
+                  path.rewind()
+                  path.moveTo(cx - s, cy)
+                  path.lineTo(cx - 0.35f * s, cy - 0.75f * s)
+                  path.lineTo(cx + s, cy - 0.75f * s)
+                  path.lineTo(cx + s, cy + 0.75f * s)
+                  path.lineTo(cx - 0.35f * s, cy + 0.75f * s)
+                  path.close()
+                  c.drawPath(path, icon)
+                  c.drawLine(cx - 0.05f * s, cy - 0.3f * s, cx + 0.55f * s, cy + 0.3f * s, icon)
+                  c.drawLine(cx - 0.05f * s, cy + 0.3f * s, cx + 0.55f * s, cy - 0.3f * s, icon)
+              }
+
+              private fun drawArrowBox(c: Canvas, k: Key) {
+                  val m = 4f * dp
+                  val vm = 0.12f * (k.b - k.t)
+                  c.drawRect(k.l + m, k.t + vm, k.r - m, k.b - vm, box)
+                  val cx = (k.l + k.r) / 2f
+                  val cy = (k.t + k.b) / 2f
+                  val s = 0.03f * width
+                  c.drawLine(cx + s, cy, cx - s, cy, icon)
+                  c.drawLine(cx - s, cy, cx - 0.3f * s, cy - 0.6f * s, icon)
+                  c.drawLine(cx - s, cy, cx - 0.3f * s, cy + 0.6f * s, icon)
+              }
+
+              private fun drawKey(c: Canvas, k: Key) {
+                  val cx = (k.l + k.r) / 2f
+                  val cy = (k.t + k.b) / 2f
+                  if (k === pressedKey) {
+                      val m = 3f * dp
+                      c.drawRoundRect(k.l + m, k.t + m, k.r - m, k.b - m, 8f * dp, 8f * dp, hl)
+                  }
+                  when (k.kind) {
+                      Kind.BACK -> drawBackspace(c, cx, cy)
+                      Kind.TO_LETTERS -> drawArrowBox(c, k)
+                      Kind.COMMA -> {
+                          val kh = k.b - k.t
+                          text(c, "，", cx, cy + 0.12f * kh, big)
+                          text(c, "。", cx, cy - 0.28f * kh, small)
+                      }
+                      Kind.LETTER -> text(c, k.label, cx, cy, big)
+                      Kind.TEXT -> text(c, k.label, cx, cy, if (panel == Panel.NUM && k.r <= numLeftW + 1f) mid else big)
+                      else -> if (k.label.isNotEmpty()) text(c, k.label, cx, cy, mid)
+                  }
+              }
+
+              override fun onDraw(c: Canvas) {
+                  c.drawColor(Color.BLACK)
+                  for (k in cur()) drawKey(c, k)
+                  if (trail.draw(c, SystemClock.uptimeMillis())) postInvalidateOnAnimation()
+              }
+
+              // ---------- 触摸 ----------
+
+              private fun addPt(x: Float, y: Float, t: Long) {
+                  if (n < px.size) {
+                      px[n] = x
+                      py[n] = y
+                      pt[n] = t
+                      n++
+                  }
+              }
+
+              private fun fire(k: Key) {
+                  performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                  when (k.kind) {
+                      Kind.LETTER -> host.onLetter(k.value[0])
+                      Kind.SPACE -> host.onSpace()
+                      Kind.ENTER -> host.onEnter()
+                      Kind.TEXT -> host.onText(k.value)
+                      Kind.TO_NUM -> panel = Panel.NUM
+                      Kind.TO_SYM -> panel = Panel.SYM
+                      Kind.TO_LETTERS -> panel = Panel.LETTERS
+                      Kind.COMMA -> host.onText(if (swipedUp) "。" else "，")
+                      Kind.BACK -> {}
+                  }
+                  invalidate()
+              }
+
+              override fun onTouchEvent(e: MotionEvent): Boolean {
+                  when (e.actionMasked) {
+                      MotionEvent.ACTION_DOWN -> {
+                          val k = findKey(e.x, e.y)
+                          downKey = k
+                          pressedKey = k
+                          dx = e.x
+                          dy = e.y
+                          glide = false
+                          swipedUp = false
+                          fed = 0
+                          n = 0
+                          if (k != null && k.kind == Kind.LETTER) addPt(e.x, e.y, e.eventTime)
+                          if (k != null && k.kind == Kind.BACK) {
+                              performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                              host.onBackspace()
+                              uiHandler.postDelayed(repeater, 400)
+                          }
+                          invalidate()
+                      }
+                      MotionEvent.ACTION_MOVE -> {
+                          val k = downKey ?: return true
+                          if (k.kind == Kind.LETTER) {
+                              for (i in 0 until e.historySize) {
+                                  addPt(e.getHistoricalX(i), e.getHistoricalY(i), e.getHistoricalEventTime(i))
+                              }
+                              addPt(e.x, e.y, e.eventTime)
+                              if (!glide && hypot(e.x - dx, e.y - dy) > gthr) {
+                                  glide = true
+                                  pressedKey = null
+                                  trail.down(px[0], py[0], pt[0])
+                                  fed = 1
+                              }
+                              if (glide) {
+                                  while (fed < n) {
+                                      trail.move(px[fed], py[fed], pt[fed])
+                                      fed++
+                                  }
+                              }
+                          } else if (k.kind == Kind.COMMA) {
+                              if (dy - e.y > 0.45f * rowH) swipedUp = true
+                          }
+                          invalidate()
+                      }
+                      MotionEvent.ACTION_UP -> {
+                          uiHandler.removeCallbacks(repeater)
+                          val k = downKey
+                          downKey = null
+                          pressedKey = null
+                          if (glide) {
+                              trail.up(e.eventTime)
+                              glide = false
+                              host.onGlide(px.copyOf(n), py.copyOf(n), n)
+                          } else if (k != null && k.kind != Kind.BACK) {
+                              val upKey = findKey(e.x, e.y)
+                              if (upKey === k || hypot(e.x - dx, e.y - dy) < gthr || k.kind == Kind.COMMA) fire(k)
+                          }
+                          invalidate()
+                      }
+                      MotionEvent.ACTION_CANCEL -> {
+                          uiHandler.removeCallbacks(repeater)
+                          if (glide) trail.up(e.eventTime)
+                          glide = false
+                          downKey = null
+                          pressedKey = null
+                          invalidate()
+                      }
+                  }
+                  return true
+              }
+          }
+          EOF
+          mkdir -p app/src/main/java/ime/swipe
+          cat > app/src/main/java/ime/swipe/SwipeIme.kt <<'EOF'
+          package ime.swipe
+
+          import android.graphics.Color
+          import android.inputmethodservice.InputMethodService
+          import android.view.Gravity
+          import android.view.KeyEvent
+          import android.view.View
+          import android.view.ViewGroup
+          import android.view.inputmethod.EditorInfo
+          import android.widget.HorizontalScrollView
+          import android.widget.LinearLayout
+          import android.widget.TextView
+
+          class SwipeIme : InputMethodService(), KeyboardView.Host {
+              private val lex = Lexicon()
+              private val decoder = GlideDecoder(lex)
+              private lateinit var candRow: LinearLayout
+              private lateinit var candScroll: HorizontalScrollView
+
+              private val composing = StringBuilder()
+              private var mode = 0 // 0 空闲 1 拼音输入 2 滑行结果
+              private var cands: List<Cand> = emptyList()
+              private var glideWords: List<String> = emptyList()
+
+              override fun onCreate() {
+                  super.onCreate()
+                  Thread { lex.load(applicationContext) }.start()
+              }
+
+              override fun onCreateInputView(): View {
+                  val d = resources.displayMetrics.density
+                  val root = LinearLayout(this)
+                  root.orientation = LinearLayout.VERTICAL
+                  root.setBackgroundColor(Color.BLACK)
+
+                  candScroll = HorizontalScrollView(this)
+                  candScroll.isHorizontalScrollBarEnabled = false
+                  candRow = LinearLayout(this)
+                  candRow.orientation = LinearLayout.HORIZONTAL
+                  candScroll.addView(
+                      candRow,
+                      ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                  )
+                  root.addView(
+                      candScroll,
+                      LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (52 * d).toInt())
+                  )
+
+                  val kbd = KeyboardView(this, this, decoder)
+                  root.addView(
+                      kbd,
+                      LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (228 * d).toInt())
+                  )
+                  return root
+              }
+
+              override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
+                  super.onStartInputView(info, restarting)
+                  composing.setLength(0)
+                  mode = 0
+                  if (::candRow.isInitialized) clearCands()
+              }
+
+              override fun onFinishInputView(finishingInput: Boolean) {
+                  super.onFinishInputView(finishingInput)
+                  currentInputConnection?.finishComposingText()
+                  composing.setLength(0)
+                  mode = 0
+              }
+
+              // ---------- 候选栏 ----------
+
+              private fun clearCands() {
+                  candRow.removeAllViews()
+              }
+
+              private fun showCands(items: List<String>) {
+                  candRow.removeAllViews()
+                  val d = resources.displayMetrics.density
+                  for (i in items.indices) {
+                      val tv = TextView(this)
+                      tv.text = items[i]
+                      tv.setTextColor(Color.WHITE)
+                      tv.textSize = 22f
+                      tv.gravity = Gravity.CENTER_VERTICAL
+                      tv.setPadding((16 * d).toInt(), 0, (16 * d).toInt(), 0)
+                      tv.setOnClickListener { pick(i) }
+                      candRow.addView(
+                          tv,
+                          LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                      )
+                  }
+                  candScroll.scrollTo(0, 0)
+              }
+
+              private fun refreshTyped() {
+                  cands = lex.candidates(composing.toString())
+                  showCands(cands.map { it.text })
+              }
+
+              private fun pick(i: Int) {
+                  val ic = currentInputConnection ?: return
+                  if (mode == 1) {
+                      if (i >= cands.size) return
+                      val cd = cands[i]
+                      val used = minOf(cd.used, composing.length)
+                      ic.beginBatchEdit()
+                      ic.commitText(cd.text, 1)
+                      composing.delete(0, used)
+                      if (composing.isNotEmpty()) ic.setComposingText(composing.toString(), 1)
+                      ic.endBatchEdit()
+                      if (composing.isEmpty()) {
+                          mode = 0
+                          clearCands()
+                      } else {
+                          refreshTyped()
+                      }
+                  } else if (mode == 2) {
+                      if (i >= glideWords.size) return
+                      ic.commitText(glideWords[i], 1)
+                      mode = 0
+                      clearCands()
+                  }
+              }
+
+              private fun commitRaw() {
+                  val ic = currentInputConnection ?: return
+                  ic.commitText(composing.toString(), 1)
+                  composing.setLength(0)
+                  mode = 0
+                  clearCands()
+              }
+
+              private fun finishGlide() {
+                  currentInputConnection?.finishComposingText()
+                  mode = 0
+                  clearCands()
+              }
+
+              /** 把正在输入的拼音全部落到输入框 */
+              private fun settleTyped() {
+                  if (mode != 1) return
+                  if (cands.isNotEmpty()) pick(0)
+                  if (mode == 1 && composing.isNotEmpty()) commitRaw()
+              }
+
+              // ---------- 键盘事件 ----------
+
+              override fun onLetter(c: Char) {
+                  val ic = currentInputConnection ?: return
+                  if (mode == 2) finishGlide()
+                  composing.append(c)
+                  mode = 1
+                  ic.setComposingText(composing.toString(), 1)
+                  refreshTyped()
+              }
+
+              override fun onBackspace() {
+                  val ic = currentInputConnection ?: return
+                  when (mode) {
+                      1 -> {
+                          composing.setLength(composing.length - 1)
+                          if (composing.isEmpty()) {
+                              ic.setComposingText("", 1)
+                              mode = 0
+                              clearCands()
+                          } else {
+                              ic.setComposingText(composing.toString(), 1)
+                              refreshTyped()
+                          }
+                      }
+                      2 -> {
+                          ic.setComposingText("", 1)
+                          mode = 0
+                          clearCands()
+                      }
+                      else -> sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
+                  }
+              }
+
+              override fun onSpace() {
+                  val ic = currentInputConnection ?: return
+                  when (mode) {
+                      1 -> if (cands.isNotEmpty()) pick(0) else commitRaw()
+                      2 -> finishGlide()
+                      else -> ic.commitText(" ", 1)
+                  }
+              }
+
+              override fun onEnter() {
+                  when (mode) {
+                      1 -> commitRaw()
+                      2 -> finishGlide()
+                      else -> doEnter()
+                  }
+              }
+
+              private fun doEnter() {
+                  val opts = currentInputEditorInfo?.imeOptions ?: 0
+                  val action = opts and EditorInfo.IME_MASK_ACTION
+                  val noEnter = (opts and EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0
+                  if (!noEnter && action != EditorInfo.IME_ACTION_NONE && action != EditorInfo.IME_ACTION_UNSPECIFIED) {
+                      currentInputConnection?.performEditorAction(action)
+                  } else {
+                      sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
+                  }
+              }
+
+              override fun onText(s: String) {
+                  val ic = currentInputConnection ?: return
+                  if (mode == 1) settleTyped()
+                  if (mode == 2) finishGlide()
+                  ic.commitText(s, 1)
+              }
+
+              override fun onGlide(xs: FloatArray, ys: FloatArray, n: Int) {
+                  val ic = currentInputConnection ?: return
+                  if (mode == 1) settleTyped()
+                  if (mode == 2) finishGlide()
+                  val hits = decoder.decode(xs, ys, n, 8)
+                  if (hits.isEmpty()) return
+                  val words = ArrayList<String>()
+                  for (h in hits) {
+                      for (w in lex.wordsFor(h.py, 3)) {
+                          if (!words.contains(w)) words.add(w)
+                      }
+                  }
+                  if (words.isEmpty()) return
+                  glideWords = words
+                  mode = 2
+                  ic.setComposingText(words[0], 1)
+                  showCands(words)
+              }
+          }
+          EOF
+          mkdir -p app/src/main/java/ime/swipe
+          cat > app/src/main/java/ime/swipe/MainActivity.kt <<'EOF'
+          package ime.swipe
+
+          import android.app.Activity
+          import android.content.Intent
+          import android.graphics.Color
+          import android.os.Bundle
+          import android.provider.Settings
+          import android.view.inputmethod.InputMethodManager
+          import android.widget.Button
+          import android.widget.EditText
+          import android.widget.LinearLayout
+          import android.widget.TextView
+
+          class MainActivity : Activity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  val d = resources.displayMetrics.density
+                  val pad = (20 * d).toInt()
+                  val root = LinearLayout(this)
+                  root.orientation = LinearLayout.VERTICAL
+                  root.setBackgroundColor(Color.BLACK)
+                  root.setPadding(pad, (40 * d).toInt(), pad, pad)
+
+                  val tip = TextView(this)
+                  tip.text = "1 点下面第一个按钮 启用输入法\n2 点第二个按钮 切换到本输入法\n3 在下方输入框试着划拼音"
+                  tip.setTextColor(Color.WHITE)
+                  tip.textSize = 16f
+                  root.addView(tip)
+
+                  val b1 = Button(this)
+                  b1.text = "启用输入法"
+                  b1.setOnClickListener { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
+                  root.addView(b1)
+
+                  val b2 = Button(this)
+                  b2.text = "切换输入法"
+                  b2.setOnClickListener {
+                      val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+                      imm.showInputMethodPicker()
+                  }
+                  root.addView(b2)
+
+                  val et = EditText(this)
+                  et.setTextColor(Color.WHITE)
+                  et.setHintTextColor(Color.GRAY)
+                  et.hint = "在这里试"
+                  root.addView(et)
+
+                  setContentView(root)
+              }
+          }
+          EOF
+          mkdir -p tools
+          cat > tools/mklex.py <<'EOF'
+          import os
+          import re
+          import sys
+
+          out = sys.argv[1]
+          srcs = [p for p in sys.argv[2:] if os.path.exists(p)]
+          MAXN = 200000
+
+          entries = {}
+          for path in srcs:
+              started = False
+              for line in open(path, encoding='utf-8'):
+                  line = line.rstrip('\n')
+                  if not started:
+                      if line.strip() == '...':
+                          started = True
+                      continue
+                  if not line or line.startswith('#'):
+                      continue
+                  parts = line.split('\t')
+                  if len(parts) < 2:
+                      continue
+                  word = parts[0].strip()
+                  code = parts[1].strip().replace('ü', 'v')
+                  w = 1
+                  if len(parts) >= 3:
+                      try:
+                          w = int(float(parts[2].strip().rstrip('%')))
+                      except ValueError:
+                          w = 1
+                  w = max(1, min(w, 2000000000))
+                  py = code.replace(' ', '').replace("'", '')
+                  if not re.fullmatch(r'[a-z]{1,24}', py):
+                      continue
+                  if not re.fullmatch(r'[\u4e00-\u9fff]{1,8}', word):
+                      continue
+                  key = (py, word)
+                  if key not in entries or entries[key] < w:
+                      entries[key] = w
+
+          rows = [(py, word, w) for (py, word), w in entries.items()]
+          singles = [r for r in rows if len(r[1]) == 1]
+          words = [r for r in rows if len(r[1]) > 1]
+          words.sort(key=lambda r: -r[2])
+          rows = singles + words[:max(0, MAXN - len(singles))]
+          rows.sort(key=lambda r: (r[0], -r[2]))
+
+          with open(out, 'w', encoding='utf-8') as f:
+              for py, word, w in rows:
+                  f.write(py + '\t' + word + '\t' + str(w) + '\n')
+          print('entries', len(rows), 'from', len(entries))
+          EOF
+      - name: Build lexicon
+        run: |
+          mkdir -p lexsrc app/src/main/assets
+          fetch() {
+            for b in main master; do
+              curl -fsSL "https://raw.githubusercontent.com/iDvel/rime-ice/$b/cn_dicts/$1.dict.yaml" -o "lexsrc/$1.yaml" && return 0
+            done
+            return 1
+          }
+          fetch 8105
+          fetch base
+          fetch ext || echo "ext missing"
+          python3 tools/mklex.py app/src/main/assets/lex.txt lexsrc/8105.yaml lexsrc/base.yaml lexsrc/ext.yaml
+          n=$(wc -l < app/src/main/assets/lex.txt)
+          echo "lexicon lines $n"
+          test "$n" -gt 20000
+      - name: Build
+        run: gradle assembleDebug --no-daemon --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SwipeIme
+          path: app/build/outputs/apk/debug/app-debug.apk
