@@ -282,12 +282,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
     override fun onTool(name: String) {
         if (name.startsWith("alpha_")) {
-            if (name == "alpha_refresh") {
-                window?.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-                kbd.requestLayout()
-            } else {
-                store.bgAlpha = name.substring(6).toInt()
-            }
+            store.bgAlpha = name.substring(6).toInt()
             applyAlpha()
             return
         }
@@ -314,7 +309,6 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
                 ic?.performContextMenuAction(android.R.id.selectAll)
                 ic?.performContextMenuAction(android.R.id.copy)
             }
-            "cut" -> ic?.performContextMenuAction(android.R.id.cut)
             "paste_enter" -> {
                 ic?.performContextMenuAction(android.R.id.paste)
                 doEnter()
@@ -322,8 +316,6 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
             "undo" -> ctrlKey(KeyEvent.KEYCODE_Z)
             "left" -> sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_LEFT)
             "right" -> sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_RIGHT)
-            "line_start" -> sendDownUpKeyEvents(KeyEvent.KEYCODE_MOVE_HOME)
-            "line_end" -> sendDownUpKeyEvents(KeyEvent.KEYCODE_MOVE_END)
             "para_start" -> moveParagraph(-1)
             "para_end" -> moveParagraph(1)
         }
