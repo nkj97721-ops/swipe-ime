@@ -23,6 +23,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private lateinit var store: Store
     private lateinit var kbd: KeyboardView
     private lateinit var panel: PanelView
+    private lateinit var inputRoot: LinearLayout
     private lateinit var candRow: LinearLayout
     private lateinit var candScroll: HorizontalScrollView
 
@@ -59,6 +60,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         val d = resources.displayMetrics.density
         val rowPx = (57 * d).toInt()
         val root = LinearLayout(this)
+        inputRoot = root
         root.orientation = LinearLayout.VERTICAL
 
         candScroll = HorizontalScrollView(this)
@@ -235,6 +237,16 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         settle()
         hidePanel()
         requestHideSelf(0)
+    }
+
+    override fun onSpaceMove(deltaY: Float) {
+        if (!::inputRoot.isInitialized || inputRoot.height <= 0) return
+        val minOffset = -inputRoot.height * 0.35f
+        inputRoot.translationY = (inputRoot.translationY + deltaY).coerceIn(minOffset, 0f)
+    }
+
+    override fun onSpaceMoveEnd() {
+        // 保持当前位置；向下滑可将键盘移回默认位置
     }
 
     override fun onSpace() {
