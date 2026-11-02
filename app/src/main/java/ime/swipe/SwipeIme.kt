@@ -286,11 +286,6 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     // ---------- 工具行 ----------
 
     override fun onTool(name: String) {
-        if (name.startsWith("alpha_")) {
-            store.bgAlpha = name.substring(6).toInt()
-            applyAlpha()
-            return
-        }
         if (name == "clip") {
             togglePanel(1)
             return
