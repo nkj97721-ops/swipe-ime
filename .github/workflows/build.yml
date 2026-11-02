@@ -1,6 +1,5 @@
 name: build-swipe-ime
 on:
-  push:
   workflow_dispatch:
 jobs:
   apk:
