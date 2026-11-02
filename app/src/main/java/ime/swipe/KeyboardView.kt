@@ -221,7 +221,7 @@ class KeyboardView(
         val w2 = w / 2f
         for (i in 0..1) toolKeys.add(Key(t2[i], Kind.TOOL, c2[i], i * w2, 5 * rh, (i + 1) * w2, 6 * rh))
         // 最底部整行只保留居中的收起键，点击后收起键盘
-        toolKeys.add(Key("收起", Kind.TOOL, "hide", 0f, 6 * rh, w, 7 * rh))
+        toolKeys.add(Key("收起", Kind.TOOL, "hide", 0f, 6.25f * rh, w, 6.75f * rh))
         invalidate()
     }
 
