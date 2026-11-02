@@ -4,6 +4,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.drawable.ColorDrawable
 import android.inputmethodservice.InputMethodService
 import android.os.SystemClock
@@ -26,6 +27,8 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private lateinit var inputRoot: LinearLayout
     private lateinit var candRow: LinearLayout
     private lateinit var candScroll: HorizontalScrollView
+    private var keyboardOffsetY = 0f
+    private var baseWindowY = 0
 
     private val composing = StringBuilder()
     private var mode = 0 // 0 空闲 1 拼音输入 2 滑行结果
@@ -61,6 +64,8 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         val rowPx = (57 * d).toInt()
         val root = LinearLayout(this)
         inputRoot = root
+        baseWindowY = window?.window?.attributes?.y ?: 0
+        keyboardOffsetY = 0f
         root.orientation = LinearLayout.VERTICAL
 
         candScroll = HorizontalScrollView(this)
@@ -90,6 +95,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        resetKeyboardWindowPosition()
         composing.setLength(0)
         mode = 0
         if (::candRow.isInitialized) clearCands()
@@ -98,6 +104,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
+        resetKeyboardWindowPosition()
         currentInputConnection?.finishComposingText()
         composing.setLength(0)
         mode = 0
@@ -241,12 +248,36 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
     override fun onSpaceMove(deltaY: Float) {
         if (!::inputRoot.isInitialized || inputRoot.height <= 0) return
-        val minOffset = -inputRoot.height * 0.35f
-        inputRoot.translationY = (inputRoot.translationY + deltaY).coerceIn(minOffset, 0f)
+        val imeWindow = window?.window ?: return
+        val decor = imeWindow.decorView
+        val visibleFrame = Rect()
+        decor.getWindowVisibleDisplayFrame(visibleFrame)
+        if (visibleFrame.height() <= 0) return
+
+        val location = IntArray(2)
+        inputRoot.getLocationOnScreen(location)
+        val minDelta = (visibleFrame.top - location[1]).toFloat()
+        val maxDelta = (visibleFrame.bottom - location[1] - inputRoot.height).toFloat()
+        if (minDelta > maxDelta) return
+
+        val appliedDelta = deltaY.coerceIn(minDelta, maxDelta)
+        if (appliedDelta == 0f) return
+        keyboardOffsetY += appliedDelta
+        val params = imeWindow.attributes
+        params.y = baseWindowY - keyboardOffsetY.toInt()
+        imeWindow.attributes = params
     }
 
     override fun onSpaceMoveEnd() {
-        // 保持当前位置；向下滑可将键盘移回默认位置
+        // 松手后保持窗口当前位置
+    }
+
+    private fun resetKeyboardWindowPosition() {
+        keyboardOffsetY = 0f
+        val imeWindow = window?.window ?: return
+        val params = imeWindow.attributes
+        params.y = baseWindowY
+        imeWindow.attributes = params
     }
 
     override fun onSpace() {
