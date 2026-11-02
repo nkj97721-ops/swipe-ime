@@ -94,6 +94,39 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         if (::panel.isInitialized) hidePanel()
     }
 
+    /**
+     * 编辑器光标/选区可能被外部操作移动。
+     * 只要系统报告的选区不再位于当前 composing 区域末尾，就丢弃本地拼音状态，
+     * 避免下一次按键把旧拼音写到新的光标位置。
+     */
+    override fun onUpdateSelection(
+        oldSelStart: Int,
+        oldSelEnd: Int,
+        newSelStart: Int,
+        newSelEnd: Int,
+        candidatesStart: Int,
+        candidatesEnd: Int
+    ) {
+        super.onUpdateSelection(
+            oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd
+        )
+        if (mode == 0) return
+
+        val selectionStillAtCompositionEnd =
+            newSelStart == newSelEnd &&
+            candidatesStart >= 0 &&
+            candidatesEnd >= candidatesStart &&
+            newSelStart == candidatesEnd
+
+        if (!selectionStillAtCompositionEnd) {
+            composing.setLength(0)
+            mode = 0
+            cands = emptyList()
+            glideWords = emptyList()
+            if (::candRow.isInitialized) clearCands()
+        }
+    }
+
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
         currentInputConnection?.finishComposingText()
@@ -207,6 +240,11 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         val ic = currentInputConnection ?: return
         when (mode) {
             1 -> {
+                if (composing.isEmpty()) {
+                    mode = 0
+                    clearCands()
+                    return
+                }
                 composing.setLength(composing.length - 1)
                 if (composing.isEmpty()) {
                     ic.setComposingText("", 1)
