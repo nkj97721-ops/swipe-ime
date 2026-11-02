@@ -393,15 +393,4 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         }
     }
 
-    override fun onPanelDelete(kind: Int, index: Int) {
-        if (kind == 1) {
-            if (index < clips.size) clips.removeAt(index)
-            store.putList("clips", clips)
-            panel.show(1, clips)
-        } else {
-            if (index < phrases.size) phrases.removeAt(index)
-            store.putList("phrases", phrases)
-            panel.show(2, phrases)
-        }
-    }
 }
