@@ -347,12 +347,9 @@ class KeyboardView(
                     }
                 } else if (k.kind == Kind.COMMA) {
                     if (dy - e.y > 0.45f * rowH) swipedUp = true
-                } else if (k.kind == Kind.BACK && kotlin.math.abs(e.y - dy) > 0.25f * rowH) {
-                    }
                 invalidate()
             }
             MotionEvent.ACTION_UP -> {
-                uiHandler.removeCallbacks(repeater)
                 val k = downKey
                 downKey = null
                 pressedKey = null
