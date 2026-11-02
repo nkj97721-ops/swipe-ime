@@ -16,7 +16,6 @@ class PanelView(ctx: Context, private val cb: PanelView.Callback) : LinearLayout
         fun onPanelPick(text: String)
         fun onPanelBack()
         fun onPanelAction(kind: Int)
-        fun onPanelDelete(kind: Int, index: Int)
     }
 
     private val d = resources.displayMetrics.density
