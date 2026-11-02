@@ -12,6 +12,7 @@ import android.os.SystemClock
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import swipe.trail.SwipeTrail
 import kotlin.math.hypot
 
@@ -54,6 +55,7 @@ class KeyboardView(
     }
 
     private val dp = resources.displayMetrics.density
+    private val spaceTouchSlop = ViewConfiguration.get(ctx).scaledTouchSlop.toFloat()
     private val trail = SwipeTrail(dp, TrailParams.load(store))
 
     private val lettersKeys = ArrayList<Key>()
@@ -101,11 +103,14 @@ class KeyboardView(
     private var spaceLongPressed = false
     private var spaceDragging = false
     private var spaceLastY = 0f
+    private var spaceDownX = 0f
+    private var spaceGestureCancelled = false
+    private var activePointerId = MotionEvent.INVALID_POINTER_ID
     private val cursorJumpHandler = Handler(Looper.getMainLooper())
     private val spaceLongPressHandler = Handler(Looper.getMainLooper())
     private val spaceLongPress = object : Runnable {
         override fun run() {
-            if (downKey?.kind != Kind.SPACE) return
+            if (downKey?.kind != Kind.SPACE || spaceDragging || spaceGestureCancelled) return
             spaceLongPressed = true
             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
             host.onSpaceLongPress()
@@ -361,6 +366,9 @@ class KeyboardView(
                 spaceLongPressed = false
                 spaceDragging = false
                 spaceLastY = e.y
+                spaceDownX = e.x
+                spaceGestureCancelled = false
+                activePointerId = e.getPointerId(0)
                 backspaceHandler.removeCallbacks(backspaceRepeat)
                 cursorJumpHandler.removeCallbacks(cursorJumpLongPress)
                 spaceLongPressHandler.removeCallbacks(spaceLongPress)
@@ -397,17 +405,31 @@ class KeyboardView(
                         }
                     }
                 } else if (k.kind == Kind.SPACE) {
-                    val vertical = e.y - dy
-                    if (!spaceDragging && kotlin.math.abs(vertical) > 10f * dp) {
+                    val pointerIndex = e.findPointerIndex(activePointerId)
+                    if (pointerIndex < 0) {
+                        spaceGestureCancelled = true
                         spaceLongPressHandler.removeCallbacks(spaceLongPress)
-                        spaceDragging = true
-                        spaceLastY = dy
-                    }
-                    if (spaceDragging) {
-                        host.onSpaceMove(e.y - spaceLastY)
-                        spaceLastY = e.y
-                    } else if (!k.hit(e.x, e.y)) {
-                        spaceLongPressHandler.removeCallbacks(spaceLongPress)
+                    } else {
+                        val x = e.getX(pointerIndex)
+                        val y = e.getY(pointerIndex)
+                        val horizontal = x - spaceDownX
+                        val vertical = y - dy
+                        if (!spaceDragging && kotlin.math.abs(horizontal) > spaceTouchSlop) {
+                            spaceGestureCancelled = true
+                            spaceLongPressHandler.removeCallbacks(spaceLongPress)
+                        } else if (!spaceDragging && !spaceLongPressed && kotlin.math.abs(vertical) > spaceTouchSlop) {
+                            spaceLongPressHandler.removeCallbacks(spaceLongPress)
+                            spaceDragging = true
+                            val consumed = vertical - kotlin.math.sign(vertical) * spaceTouchSlop
+                            if (consumed != 0f) host.onSpaceMove(consumed)
+                            spaceLastY = y
+                        } else if (spaceDragging) {
+                            host.onSpaceMove(y - spaceLastY)
+                            spaceLastY = y
+                        } else if (!k.hit(x, y)) {
+                            spaceLongPressHandler.removeCallbacks(spaceLongPress)
+                            spaceGestureCancelled = true
+                        }
                     }
                 } else if (k.kind == Kind.COMMA) {
                     if (dy - e.y > 0.45f * rowH) swipedUp = true
@@ -422,6 +444,14 @@ class KeyboardView(
                     }
                 }
                 invalidate()
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                if (downKey?.kind == Kind.SPACE) {
+                    spaceGestureCancelled = true
+                    spaceLongPressHandler.removeCallbacks(spaceLongPress)
+                    if (spaceDragging) host.onSpaceMoveEnd()
+                    spaceDragging = false
+                }
             }
             MotionEvent.ACTION_UP -> {
                 val k = downKey
@@ -443,8 +473,11 @@ class KeyboardView(
                     else if (!backspaceLongPressed) host.onBackspace()
                 } else if (k != null) {
                     val upKey = findKey(e.x, e.y)
-                    if (!cursorJumpLongPressed && !(k.kind == Kind.SPACE && spaceLongPressed) && (upKey === k || hypot(e.x - dx, e.y - dy) < gthr || k.kind == Kind.COMMA)) fire(k)
+                    if (!cursorJumpLongPressed && !(k.kind == Kind.SPACE && (spaceLongPressed || spaceGestureCancelled)) && (upKey === k || hypot(e.x - dx, e.y - dy) < gthr || k.kind == Kind.COMMA)) fire(k)
                 }
+                spaceDragging = false
+                spaceGestureCancelled = false
+                activePointerId = MotionEvent.INVALID_POINTER_ID
                 invalidate()
             }
             MotionEvent.ACTION_CANCEL -> {
@@ -453,8 +486,10 @@ class KeyboardView(
                 spaceLongPressHandler.removeCallbacks(spaceLongPress)
                 backspaceLongPressed = false
                 spaceLongPressed = false
+                if (spaceDragging) host.onSpaceMoveEnd()
                 spaceDragging = false
-                host.onSpaceMoveEnd()
+                spaceGestureCancelled = false
+                activePointerId = MotionEvent.INVALID_POINTER_ID
                 cursorJumpLongPressed = false
                 if (glide) trail.up(e.eventTime)
                 glide = false
