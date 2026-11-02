@@ -76,11 +76,11 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
         val frame = FrameLayout(this)
         kbd = KeyboardView(this, this, decoder, store)
-        frame.addView(kbd, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 8))
+        frame.addView(kbd, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 7))
         panel = PanelView(this, this)
         panel.visibility = View.GONE
         frame.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 4, Gravity.TOP))
-        root.addView(frame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 8))
+        root.addView(frame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 7))
 
         applyAlpha()
         return root
