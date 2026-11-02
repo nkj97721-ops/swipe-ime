@@ -68,7 +68,7 @@ class PanelView(ctx: Context, private val cb: PanelView.Callback) : LinearLayout
 
     fun show(kind: Int, items: List<String>) {
         this.kind = kind
-        title.text = if (kind == 1) "剪贴板 长按条目删除" else "常用语 长按条目删除"
+        title.text = if (kind == 1) "剪贴板" else "常用语"
         action.text = if (kind == 1) "清空" else "添加当前内容"
         list.removeAllViews()
         if (items.isEmpty()) {
@@ -90,10 +90,6 @@ class PanelView(ctx: Context, private val cb: PanelView.Callback) : LinearLayout
             tv.ellipsize = TextUtils.TruncateAt.END
             tv.setPadding((18 * d).toInt(), (12 * d).toInt(), (18 * d).toInt(), (12 * d).toInt())
             tv.setOnClickListener { cb.onPanelPick(items[i]) }
-            tv.setOnLongClickListener {
-                cb.onPanelDelete(kind, i)
-                true
-            }
             list.addView(tv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             val line = View(context)
             line.setBackgroundColor(Color.rgb(34, 34, 34))
