@@ -45,6 +45,8 @@ class KeyboardView(
         fun onBackspace()
         fun onSpace()
         fun onSpaceLongPress()
+        fun onSpaceMove(deltaY: Float)
+        fun onSpaceMoveEnd()
         fun onEnter()
         fun onText(s: String)
         fun onGlide(xs: FloatArray, ys: FloatArray, n: Int)
@@ -97,6 +99,8 @@ class KeyboardView(
     private var backspaceLongPressed = false
     private var cursorJumpLongPressed = false
     private var spaceLongPressed = false
+    private var spaceDragging = false
+    private var spaceLastY = 0f
     private val cursorJumpHandler = Handler(Looper.getMainLooper())
     private val spaceLongPressHandler = Handler(Looper.getMainLooper())
     private val spaceLongPress = object : Runnable {
@@ -355,6 +359,8 @@ class KeyboardView(
                 backspaceLongPressed = false
                 cursorJumpLongPressed = false
                 spaceLongPressed = false
+                spaceDragging = false
+                spaceLastY = e.y
                 backspaceHandler.removeCallbacks(backspaceRepeat)
                 cursorJumpHandler.removeCallbacks(cursorJumpLongPress)
                 spaceLongPressHandler.removeCallbacks(spaceLongPress)
@@ -391,7 +397,18 @@ class KeyboardView(
                         }
                     }
                 } else if (k.kind == Kind.SPACE) {
-                    if (!k.hit(e.x, e.y)) spaceLongPressHandler.removeCallbacks(spaceLongPress)
+                    val vertical = e.y - dy
+                    if (!spaceDragging && kotlin.math.abs(vertical) > 10f * dp) {
+                        spaceLongPressHandler.removeCallbacks(spaceLongPress)
+                        spaceDragging = true
+                        spaceLastY = dy
+                    }
+                    if (spaceDragging) {
+                        host.onSpaceMove(e.y - spaceLastY)
+                        spaceLastY = e.y
+                    } else if (!k.hit(e.x, e.y)) {
+                        spaceLongPressHandler.removeCallbacks(spaceLongPress)
+                    }
                 } else if (k.kind == Kind.COMMA) {
                     if (dy - e.y > 0.45f * rowH) swipedUp = true
                 } else if (k.kind == Kind.TOOL && (k.value == "left" || k.value == "right")) {
@@ -417,6 +434,8 @@ class KeyboardView(
                     trail.up(e.eventTime)
                     glide = false
                     host.onGlide(px.copyOf(n), py.copyOf(n), n)
+                } else if (k != null && k.kind == Kind.SPACE && spaceDragging) {
+                    host.onSpaceMoveEnd()
                 } else if (k != null && k.kind == Kind.BACK) {
                     val deltaY = e.y - dy
                     if (deltaY < -0.35f * rowH) host.onTool("clear")
@@ -434,6 +453,8 @@ class KeyboardView(
                 spaceLongPressHandler.removeCallbacks(spaceLongPress)
                 backspaceLongPressed = false
                 spaceLongPressed = false
+                spaceDragging = false
+                host.onSpaceMoveEnd()
                 cursorJumpLongPressed = false
                 if (glide) trail.up(e.eventTime)
                 glide = false
