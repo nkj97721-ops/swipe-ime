@@ -414,9 +414,13 @@ class KeyboardView(
                         val y = e.getY(pointerIndex)
                         val horizontal = x - spaceDownX
                         val vertical = y - dy
-                        if (!spaceDragging && kotlin.math.abs(horizontal) > spaceTouchSlop) {
+                        if (spaceGestureCancelled) {
+                            // 本次空格手势已取消，直到抬手都不再触发动作
+                        } else if (kotlin.math.abs(horizontal) > spaceTouchSlop) {
                             spaceGestureCancelled = true
                             spaceLongPressHandler.removeCallbacks(spaceLongPress)
+                            if (spaceDragging) host.onSpaceMoveEnd()
+                            spaceDragging = false
                         } else if (!spaceDragging && !spaceLongPressed && kotlin.math.abs(vertical) > spaceTouchSlop) {
                             spaceLongPressHandler.removeCallbacks(spaceLongPress)
                             spaceDragging = true
