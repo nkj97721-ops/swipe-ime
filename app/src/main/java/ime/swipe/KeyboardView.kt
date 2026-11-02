@@ -94,6 +94,16 @@ class KeyboardView(
     private var n = 0
     private val backspaceHandler = Handler(Looper.getMainLooper())
     private var backspaceLongPressed = false
+    private var cursorJumpLongPressed = false
+    private val cursorJumpHandler = Handler(Looper.getMainLooper())
+    private val cursorJumpLongPress = object : Runnable {
+        override fun run() {
+            val key = downKey ?: return
+            if (key.kind != Kind.TOOL || (key.value != "left" && key.value != "right")) return
+            cursorJumpLongPressed = true
+            host.onTool(if (key.value == "left") "left_home" else "right_end")
+        }
+    }
     private val backspaceRepeat = object : Runnable {
         override fun run() {
             if (downKey?.kind != Kind.BACK) return
@@ -332,7 +342,12 @@ class KeyboardView(
                 fed = 0
                 n = 0
                 backspaceLongPressed = false
+                cursorJumpLongPressed = false
                 backspaceHandler.removeCallbacks(backspaceRepeat)
+                cursorJumpHandler.removeCallbacks(cursorJumpLongPress)
+                if (k != null && k.kind == Kind.TOOL && (k.value == "left" || k.value == "right")) {
+                    cursorJumpHandler.postDelayed(cursorJumpLongPress, 450L)
+                }
                 if (k != null && k.kind == Kind.BACK) {
                     backspaceHandler.postDelayed(backspaceRepeat, 400L)
                 }
@@ -361,6 +376,8 @@ class KeyboardView(
                     }
                 } else if (k.kind == Kind.COMMA) {
                     if (dy - e.y > 0.45f * rowH) swipedUp = true
+                } else if (k.kind == Kind.TOOL && (k.value == "left" || k.value == "right")) {
+                    if (!k.hit(e.x, e.y)) cursorJumpHandler.removeCallbacks(cursorJumpLongPress)
                 } else if (k.kind == Kind.BACK) {
                     val deltaY = e.y - dy
                     if (k.hit(e.x, e.y) && kotlin.math.abs(deltaY) <= 0.35f * rowH) {
@@ -374,6 +391,7 @@ class KeyboardView(
             MotionEvent.ACTION_UP -> {
                 val k = downKey
                 backspaceHandler.removeCallbacks(backspaceRepeat)
+                cursorJumpHandler.removeCallbacks(cursorJumpLongPress)
                 downKey = null
                 pressedKey = null
                 if (glide) {
@@ -387,13 +405,15 @@ class KeyboardView(
                     else if (!backspaceLongPressed) host.onBackspace()
                 } else if (k != null) {
                     val upKey = findKey(e.x, e.y)
-                    if (upKey === k || hypot(e.x - dx, e.y - dy) < gthr || k.kind == Kind.COMMA) fire(k)
+                    if (!cursorJumpLongPressed && (upKey === k || hypot(e.x - dx, e.y - dy) < gthr || k.kind == Kind.COMMA)) fire(k)
                 }
                 invalidate()
             }
             MotionEvent.ACTION_CANCEL -> {
                 backspaceHandler.removeCallbacks(backspaceRepeat)
+                cursorJumpHandler.removeCallbacks(cursorJumpLongPress)
                 backspaceLongPressed = false
+                cursorJumpLongPressed = false
                 if (glide) trail.up(e.eventTime)
                 glide = false
                 downKey = null
