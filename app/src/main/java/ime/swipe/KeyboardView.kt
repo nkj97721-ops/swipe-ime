@@ -44,6 +44,7 @@ class KeyboardView(
         fun onLetter(c: Char)
         fun onBackspace()
         fun onSpace()
+        fun onSpaceLongPress()
         fun onEnter()
         fun onText(s: String)
         fun onGlide(xs: FloatArray, ys: FloatArray, n: Int)
@@ -95,7 +96,17 @@ class KeyboardView(
     private val backspaceHandler = Handler(Looper.getMainLooper())
     private var backspaceLongPressed = false
     private var cursorJumpLongPressed = false
+    private var spaceLongPressed = false
     private val cursorJumpHandler = Handler(Looper.getMainLooper())
+    private val spaceLongPressHandler = Handler(Looper.getMainLooper())
+    private val spaceLongPress = object : Runnable {
+        override fun run() {
+            if (downKey?.kind != Kind.SPACE) return
+            spaceLongPressed = true
+            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            host.onSpaceLongPress()
+        }
+    }
     private val cursorJumpLongPress = object : Runnable {
         override fun run() {
             val key = downKey ?: return
@@ -343,10 +354,15 @@ class KeyboardView(
                 n = 0
                 backspaceLongPressed = false
                 cursorJumpLongPressed = false
+                spaceLongPressed = false
                 backspaceHandler.removeCallbacks(backspaceRepeat)
                 cursorJumpHandler.removeCallbacks(cursorJumpLongPress)
+                spaceLongPressHandler.removeCallbacks(spaceLongPress)
                 if (k != null && k.kind == Kind.TOOL && (k.value == "left" || k.value == "right")) {
                     cursorJumpHandler.postDelayed(cursorJumpLongPress, 450L)
+                }
+                if (k != null && k.kind == Kind.SPACE) {
+                    spaceLongPressHandler.postDelayed(spaceLongPress, 450L)
                 }
                 if (k != null && k.kind == Kind.BACK) {
                     backspaceHandler.postDelayed(backspaceRepeat, 400L)
@@ -374,6 +390,8 @@ class KeyboardView(
                             fed++
                         }
                     }
+                } else if (k.kind == Kind.SPACE) {
+                    if (!k.hit(e.x, e.y)) spaceLongPressHandler.removeCallbacks(spaceLongPress)
                 } else if (k.kind == Kind.COMMA) {
                     if (dy - e.y > 0.45f * rowH) swipedUp = true
                 } else if (k.kind == Kind.TOOL && (k.value == "left" || k.value == "right")) {
@@ -392,6 +410,7 @@ class KeyboardView(
                 val k = downKey
                 backspaceHandler.removeCallbacks(backspaceRepeat)
                 cursorJumpHandler.removeCallbacks(cursorJumpLongPress)
+                spaceLongPressHandler.removeCallbacks(spaceLongPress)
                 downKey = null
                 pressedKey = null
                 if (glide) {
@@ -405,14 +424,16 @@ class KeyboardView(
                     else if (!backspaceLongPressed) host.onBackspace()
                 } else if (k != null) {
                     val upKey = findKey(e.x, e.y)
-                    if (!cursorJumpLongPressed && (upKey === k || hypot(e.x - dx, e.y - dy) < gthr || k.kind == Kind.COMMA)) fire(k)
+                    if (!cursorJumpLongPressed && !(k.kind == Kind.SPACE && spaceLongPressed) && (upKey === k || hypot(e.x - dx, e.y - dy) < gthr || k.kind == Kind.COMMA)) fire(k)
                 }
                 invalidate()
             }
             MotionEvent.ACTION_CANCEL -> {
                 backspaceHandler.removeCallbacks(backspaceRepeat)
                 cursorJumpHandler.removeCallbacks(cursorJumpLongPress)
+                spaceLongPressHandler.removeCallbacks(spaceLongPress)
                 backspaceLongPressed = false
+                spaceLongPressed = false
                 cursorJumpLongPressed = false
                 if (glide) trail.up(e.eventTime)
                 glide = false
