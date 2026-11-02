@@ -80,7 +80,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         panel = PanelView(this, this)
         panel.visibility = View.GONE
         frame.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 4, Gravity.TOP))
-        root.addView(frame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 7))
+        root.addView(frame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 6))
 
         applyAlpha()
         return root
