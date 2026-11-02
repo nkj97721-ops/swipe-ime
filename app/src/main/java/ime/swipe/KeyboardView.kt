@@ -187,9 +187,9 @@ class KeyboardView(
             }
         }
         numKeys.add(Key("符号", Kind.TO_SYM, "", x1, 3 * rh, x2, 4 * rh))
-        // 0 与空格互换位置，小数点保持原位
-        numKeys.add(Key("空格", Kind.SPACE, " ", x2, 3 * rh, x3, 4 * rh))
-        numKeys.add(Key(".", Kind.TEXT, ".", x3, 3 * rh, x4, 4 * rh))
+        // 0 的正下方放小数点；空格键横跨底部中间两列
+        numKeys.add(Key("空格", Kind.SPACE, " ", x2, 3 * rh, x4, 4 * rh))
+        numKeys.add(Key(".", Kind.TEXT, ".", x4, 2 * rh, w, 3 * rh))
         numKeys.add(Key("", Kind.BACK, "", x4, 0f, w, rh))
         numKeys.add(Key("0", Kind.TEXT, "0", x4, rh, w, 2 * rh))
         numKeys.add(Key("换行", Kind.ENTER, "", x4, 3 * rh, w, 4 * rh))
