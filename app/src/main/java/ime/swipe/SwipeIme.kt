@@ -4,7 +4,6 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.Color
-import android.graphics.Rect
 import android.graphics.drawable.ColorDrawable
 import android.inputmethodservice.InputMethodService
 import android.os.SystemClock
@@ -24,11 +23,8 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private lateinit var store: Store
     private lateinit var kbd: KeyboardView
     private lateinit var panel: PanelView
-    private lateinit var inputRoot: LinearLayout
     private lateinit var candRow: LinearLayout
     private lateinit var candScroll: HorizontalScrollView
-    private var keyboardOffsetY = 0f
-    private var baseWindowY = 0
 
     private val composing = StringBuilder()
     private var mode = 0 // 0 空闲 1 拼音输入 2 滑行结果
@@ -63,9 +59,6 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         val d = resources.displayMetrics.density
         val rowPx = (57 * d).toInt()
         val root = LinearLayout(this)
-        inputRoot = root
-        baseWindowY = window?.window?.attributes?.y ?: 0
-        keyboardOffsetY = 0f
         root.orientation = LinearLayout.VERTICAL
 
         candScroll = HorizontalScrollView(this)
@@ -95,7 +88,6 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
-        resetKeyboardWindowPosition()
         composing.setLength(0)
         mode = 0
         if (::candRow.isInitialized) clearCands()
@@ -104,7 +96,6 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
-        resetKeyboardWindowPosition()
         currentInputConnection?.finishComposingText()
         composing.setLength(0)
         mode = 0
@@ -244,40 +235,6 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         settle()
         hidePanel()
         requestHideSelf(0)
-    }
-
-    override fun onSpaceMove(deltaY: Float) {
-        if (!::inputRoot.isInitialized || inputRoot.height <= 0) return
-        val imeWindow = window?.window ?: return
-        val decor = imeWindow.decorView
-        val visibleFrame = Rect()
-        decor.getWindowVisibleDisplayFrame(visibleFrame)
-        if (visibleFrame.height() <= 0) return
-
-        val location = IntArray(2)
-        inputRoot.getLocationOnScreen(location)
-        val minDelta = (visibleFrame.top - location[1]).toFloat()
-        val maxDelta = (visibleFrame.bottom - location[1] - inputRoot.height).toFloat()
-        if (minDelta > maxDelta) return
-
-        val appliedDelta = deltaY.coerceIn(minDelta, maxDelta)
-        if (appliedDelta == 0f) return
-        keyboardOffsetY += appliedDelta
-        val params = imeWindow.attributes
-        params.y = baseWindowY - keyboardOffsetY.toInt()
-        imeWindow.attributes = params
-    }
-
-    override fun onSpaceMoveEnd() {
-        // 松手后保持窗口当前位置
-    }
-
-    private fun resetKeyboardWindowPosition() {
-        keyboardOffsetY = 0f
-        val imeWindow = window?.window ?: return
-        val params = imeWindow.attributes
-        params.y = baseWindowY
-        imeWindow.attributes = params
     }
 
     override fun onSpace() {
