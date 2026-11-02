@@ -140,9 +140,6 @@ class KeyboardView(
         gthr = 0.55f * kwL
         val rows = arrayOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
         val offs = floatArrayOf(0f, 0.5f * kwL, 1.5f * kwL)
-        // 第二行首尾留白作为全文光标跳转热区：点击 a 左侧到全文首，点击 l 右侧到全文尾。
-        lettersKeys.add(Key("", Kind.TOOL, "para_start", ox, rh, ox + 0.5f * kwL, 2 * rh))
-        lettersKeys.add(Key("", Kind.TOOL, "para_end", ox + 9.5f * kwL, rh, ox + bw, 2 * rh))
         val cx = FloatArray(26)
         val cy = FloatArray(26)
         for (r in 0..2) {
