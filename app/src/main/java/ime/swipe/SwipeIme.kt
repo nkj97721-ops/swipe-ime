@@ -128,6 +128,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     // ---------- 候选栏 ----------
 
     private fun clearCands() {
+        setCandidatesExpanded(false)
         candPages.removeAllViews()
         candidatePageScrolls.clear()
         candScroll.scrollTo(0, 0)
