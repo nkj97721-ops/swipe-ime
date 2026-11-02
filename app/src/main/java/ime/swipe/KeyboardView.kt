@@ -348,20 +348,11 @@ class KeyboardView(
                     doRepeat(k)
                     uiHandler.postDelayed(repeater, 400)
                 }
-                if (k != null && k.kind == Kind.LETTER && (k.value[0] == 'a' || k.value[0] == 'l' || k.value[0] in "zxcvbn")) {
+                if (k != null && k.kind == Kind.TOOL && (k.value == "clip" || k.value == "phrase")) {
                     uiHandler.postDelayed({
                         if (downKey === k && !glide) {
                             longPressFired = true
-                            when (k.value[0]) {
-                                'a' -> host.onTool("para_start")
-                                'l' -> host.onTool("para_end")
-                                'z' -> host.onTool("alpha_0")
-                                'x' -> host.onTool("alpha_20")
-                                'c' -> host.onTool("alpha_40")
-                                'v' -> host.onTool("alpha_60")
-                                'b' -> host.onTool("alpha_80")
-                                'n' -> host.onTool("alpha_100")
-                            }
+                            host.onTool(if (k.value == "clip") "alpha_40" else "alpha_60")
                             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                         }
                     }, 500)
