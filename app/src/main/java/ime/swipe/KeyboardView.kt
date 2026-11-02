@@ -6,8 +6,6 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PorterDuff
-import android.os.Handler
-import android.os.Looper
 import android.os.SystemClock
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -28,8 +26,6 @@ private class Key(
 ) {
     fun hit(x: Float, y: Float): Boolean = x >= l && x < r && y >= t && y < b
 
-    val rep: Boolean
-        get() = kind == Kind.BACK || (kind == Kind.TOOL && (value == "left" || value == "right"))
 }
 
 private enum class Panel { LETTERS, NUM, SYM }
@@ -54,7 +50,6 @@ class KeyboardView(
 
     private val dp = resources.displayMetrics.density
     private val trail = SwipeTrail(dp, TrailParams.load(store))
-    private val uiHandler = Handler(Looper.getMainLooper())
 
     private val lettersKeys = ArrayList<Key>()
     private val numKeys = ArrayList<Key>()
@@ -66,7 +61,6 @@ class KeyboardView(
     private var gthr = 30f
     private var bgA = store.bgAlpha * 255 / 100
     private var uppercase = false
-    private var longPressFired = false
 
     var activeTool: String? = null
     private val big = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textAlign = Paint.Align.CENTER }
@@ -99,18 +93,6 @@ class KeyboardView(
     private val px = FloatArray(1024)
     private val py = FloatArray(1024)
     private val pt = LongArray(1024)
-
-    private val repeater = object : Runnable {
-        override fun run() {
-            val k = downKey ?: return
-            doRepeat(k)
-            uiHandler.postDelayed(this, 50)
-        }
-    }
-
-    private fun doRepeat(k: Key) {
-        if (k.kind == Kind.BACK) host.onBackspace() else if (k.kind == Kind.TOOL) host.onTool(k.value)
-    }
 
     fun setBgAlpha(a: Int) {
         bgA = a
@@ -341,24 +323,7 @@ class KeyboardView(
                 fed = 0
                 n = 0
                 if (k != null && k.kind == Kind.LETTER) addPt(e.x, e.y, e.eventTime)
-                longPressFired = false
-                if (k != null && k.kind == Kind.BACK) {
-                    uiHandler.postDelayed(repeater, 400)
-                } else if (k != null && k.rep) {
-                    performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                    doRepeat(k)
-                    uiHandler.postDelayed(repeater, 400)
-                }
-                if (k != null && k.kind == Kind.TOOL && (k.value == "clip" || k.value == "phrase")) {
-                    uiHandler.postDelayed({
-                        if (downKey === k && !glide) {
-                            longPressFired = true
-                            host.onTool(if (k.value == "clip") "alpha_40" else "alpha_60")
-                            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                        }
-                    }, 500)
-                }
-                invalidate()
+                        invalidate()
             }
             MotionEvent.ACTION_MOVE -> {
                 val k = downKey ?: return true
@@ -383,8 +348,7 @@ class KeyboardView(
                 } else if (k.kind == Kind.COMMA) {
                     if (dy - e.y > 0.45f * rowH) swipedUp = true
                 } else if (k.kind == Kind.BACK && kotlin.math.abs(e.y - dy) > 0.25f * rowH) {
-                    uiHandler.removeCallbacks(repeater)
-                }
+                    }
                 invalidate()
             }
             MotionEvent.ACTION_UP -> {
@@ -401,17 +365,15 @@ class KeyboardView(
                     if (deltaY < -0.35f * rowH) host.onTool("clear")
                     else if (deltaY > 0.35f * rowH) host.onTool("undo")
                     else host.onBackspace()
-                } else if (k != null && !k.rep && !longPressFired) {
+                } else if (k != null) {
                     val upKey = findKey(e.x, e.y)
                     if (upKey === k || hypot(e.x - dx, e.y - dy) < gthr || k.kind == Kind.COMMA) fire(k)
                 }
                 invalidate()
             }
             MotionEvent.ACTION_CANCEL -> {
-                uiHandler.removeCallbacks(repeater)
                 if (glide) trail.up(e.eventTime)
                 glide = false
-                longPressFired = false
                 downKey = null
                 pressedKey = null
                 invalidate()
