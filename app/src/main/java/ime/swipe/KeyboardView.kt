@@ -223,10 +223,10 @@ class KeyboardView(
         val c1 = arrayOf("hand_left", "clip", "hide", "phrase", "hand_right")
         val w5 = w / 5f
         for (i in 0..4) toolKeys.add(Key(t1[i], Kind.TOOL, c1[i], i * w5, 4 * rh, (i + 1) * w5, 5 * rh))
-        val t2 = arrayOf("全选并复制", "剪切", "粘贴并回车")
-        val c2 = arrayOf("select_copy", "cut", "paste_enter")
-        val w3 = w / 3f
-        for (i in 0..2) toolKeys.add(Key(t2[i], Kind.TOOL, c2[i], i * w3, 5 * rh, (i + 1) * w3, 6 * rh))
+        val t2 = arrayOf("全选并复制", "粘贴并回车")
+        val c2 = arrayOf("select_copy", "paste_enter")
+        val w2 = w / 2f
+        for (i in 0..1) toolKeys.add(Key(t2[i], Kind.TOOL, c2[i], i * w2, 5 * rh, (i + 1) * w2, 6 * rh))
         val t3 = arrayOf("←", "→")
         val c3 = arrayOf("left", "right")
         val w2 = w / 2f
@@ -403,6 +403,8 @@ class KeyboardView(
                     }
                 } else if (k.kind == Kind.COMMA) {
                     if (dy - e.y > 0.45f * rowH) swipedUp = true
+                } else if (k.kind == Kind.BACK && kotlin.math.abs(e.y - dy) > 0.25f * rowH) {
+                    uiHandler.removeCallbacks(repeater)
                 }
                 invalidate()
             }
