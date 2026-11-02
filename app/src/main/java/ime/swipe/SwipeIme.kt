@@ -367,28 +367,25 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         ic.sendKeyEvent(KeyEvent(t, t, KeyEvent.ACTION_UP, code, 0, meta))
     }
 
-    /** 光标移到段首或段尾 dir 小于 0 为段首 大于 0 为段尾 段以换行符分隔 */
+    /** 光标移到段首或段尾。段以换行符分隔；只发送方向键，不用 commitText 改光标。 */
     private fun moveParagraph(dir: Int) {
         val ic = currentInputConnection ?: return
-        val sel = ic.getSelectedText(0)
-        val hasSel = sel != null && sel.isNotEmpty()
-        val delta: Int
-        if (dir < 0) {
+        val selected = ic.getSelectedText(0)?.isNotEmpty() == true
+        val code = if (dir < 0) KeyEvent.KEYCODE_DPAD_LEFT else KeyEvent.KEYCODE_DPAD_RIGHT
+
+        // 有选区时先向对应方向折叠，再基于折叠后的真实光标位置计算距离。
+        if (selected) sendDownUpKeyEvents(code)
+
+        val delta = if (dir < 0) {
             val before = ic.getTextBeforeCursor(5000, 0)?.toString() ?: return
-            delta = before.length - (before.lastIndexOf('\n') + 1)
+            before.length - (before.lastIndexOf('\n') + 1)
         } else {
             val after = ic.getTextAfterCursor(5000, 0)?.toString() ?: return
-            val idx = after.indexOf('\n')
-            delta = if (idx < 0) after.length else idx
+            val newline = after.indexOf('\n')
+            if (newline < 0) after.length else newline
         }
-        val code = if (dir < 0) KeyEvent.KEYCODE_DPAD_LEFT else KeyEvent.KEYCODE_DPAD_RIGHT
-        if (hasSel) {
-            // 先折叠选区 再逐个移动
-            sendDownUpKeyEvents(code)
-            for (i in 0 until delta) sendDownUpKeyEvents(code)
-        } else if (delta > 0) {
-            ic.commitText("", if (dir < 0) -delta else 1 + delta)
-        }
+
+        repeat(delta) { sendDownUpKeyEvents(code) }
     }
 
     // ---------- 剪贴板与常用语 ----------
