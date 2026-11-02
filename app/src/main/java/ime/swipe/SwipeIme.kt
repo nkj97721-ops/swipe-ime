@@ -24,7 +24,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private lateinit var kbd: KeyboardView
     private lateinit var panel: PanelView
     private lateinit var candRow: LinearLayout
-    private lateinit var candScroll: HorizontalScrollView
+    private lateinit var candScroll: CandidateScrollView
 
     private val composing = StringBuilder()
     private var mode = 0 // 0 空闲 1 拼音输入 2 滑行结果
