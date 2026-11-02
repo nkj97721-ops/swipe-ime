@@ -11,7 +11,7 @@ android {
         applicationId = "ime.swipe.k202611022219"
         minSdk = 26
         targetSdk = 34
-        versionCode = 20261102219
+        versionCode = 20261102
         versionName = "2026.11.02-2219"
     }
     compileOptions {
