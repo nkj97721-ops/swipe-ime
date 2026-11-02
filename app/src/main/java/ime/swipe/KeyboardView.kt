@@ -15,7 +15,7 @@ import android.view.View
 import swipe.trail.SwipeTrail
 import kotlin.math.hypot
 
-private enum class Kind { LETTER, BACK, SPACE, ENTER, TEXT, TO_NUM, TO_SYM, TO_LETTERS, COMMA, TOOL }
+private enum class Kind { LETTER, BACK, SPACE, ENTER, TEXT, TO_NUM, TO_SYM, TO_LETTERS, COMMA, TOOL, SHIFT }
 
 private class Key(
     val label: String,
@@ -66,14 +66,10 @@ class KeyboardView(
     private var gthr = 30f
     private var hand = store.hand
     private var bgA = store.bgAlpha * 255 / 100
+    private var uppercase = false
+    private var longPressFired = false
 
-    /** 当前高亮的工具键 由输入法服务设置 */
     var activeTool: String? = null
-        set(v) {
-            field = v
-            invalidate()
-        }
-
     private val big = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textAlign = Paint.Align.CENTER }
     private val mid = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textAlign = Paint.Align.CENTER }
     private val accent = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(143, 176, 255); textAlign = Paint.Align.CENTER }
@@ -135,7 +131,7 @@ class KeyboardView(
 
     private fun buildKeys(w: Float, h: Float) {
         if (w <= 0f || h <= 0f) return
-        val rh = h / 8f
+        val rh = h / 7f
         val kwF = w / 10f
         rowH = rh
         big.textSize = 0.058f * w
@@ -164,7 +160,7 @@ class KeyboardView(
             val row = rows[r]
             for (i in row.indices) {
                 val l = ox + offs[r] + i * kwL
-                lettersKeys.add(Key(row[i].uppercaseChar().toString(), Kind.LETTER, row[i].toString(), l, r * rh, l + kwL, (r + 1) * rh))
+                lettersKeys.add(Key(if (uppercase) row[i].uppercaseChar().toString() else row[i].toString(), Kind.LETTER, if (uppercase) row[i].uppercaseChar().toString() else row[i].toString(), l, r * rh, l + kwL, (r + 1) * rh))
                 val idx = row[i] - 'a'
                 cx[idx] = l + kwL / 2f
                 cy[idx] = r * rh + rh / 2f
@@ -172,10 +168,12 @@ class KeyboardView(
         }
         decoder.setLayout(cx, cy, kwL)
         lettersKeys.add(Key("", Kind.BACK, "", ox + 8.5f * kwL, 2 * rh, ox + bw, 3 * rh))
+        lettersKeys.add(Key("⇧", Kind.SHIFT, "", 0f, 2 * rh, ox + 1.5f * kwL, 3 * rh))
         lettersKeys.add(Key("123", Kind.TO_NUM, "", 0f, 3 * rh, 0.2f * w, 4 * rh))
         lettersKeys.add(Key("，", Kind.COMMA, "", 0.2f * w, 3 * rh, 0.3f * w, 4 * rh))
-        lettersKeys.add(Key("", Kind.SPACE, " ", 0.3f * w, 3 * rh, 0.8f * w, 4 * rh))
-        lettersKeys.add(Key("换行", Kind.ENTER, "", 0.8f * w, 3 * rh, w, 4 * rh))
+        lettersKeys.add(Key("", Kind.SPACE, " ", 0.3f * w, 3 * rh, 0.72f * w, 4 * rh))
+        lettersKeys.add(Key("符", Kind.TO_SYM, "", 0.72f * w, 3 * rh, 0.84f * w, 4 * rh))
+        lettersKeys.add(Key("换行", Kind.ENTER, "", 0.84f * w, 3 * rh, w, 4 * rh))
 
         // 九键数字面板
         val lw = 0.186f * w
@@ -221,24 +219,18 @@ class KeyboardView(
         symKeys.add(Key("", Kind.TO_LETTERS, "", 0.011f * w, 3 * rh, 0.133f * w, 4 * rh))
 
         // 常驻三行工具键 从上到下
-        val t1 = arrayOf("左手", "剪贴板", "收起", "常用语", "右手")
+        val t1 = arrayOf("左移", "剪贴板", "收起", "常用语", "右移")
         val c1 = arrayOf("hand_left", "clip", "hide", "phrase", "hand_right")
         val w5 = w / 5f
         for (i in 0..4) toolKeys.add(Key(t1[i], Kind.TOOL, c1[i], i * w5, 4 * rh, (i + 1) * w5, 5 * rh))
-        val t2 = arrayOf("清空", "全选并复制", "剪切", "粘贴并回车", "撤销")
-        val c2 = arrayOf("clear", "select_copy", "cut", "paste_enter", "undo")
-        val t3 = arrayOf("段首", "行首", "左移", "右移", "行尾", "段尾")
-        val c3 = arrayOf("para_start", "line_start", "left", "right", "line_end", "para_end")
-        val w6 = w / 6f
-        for (i in 0..4) {
-            toolKeys.add(Key(t2[i], Kind.TOOL, c2[i], i * w5, 5 * rh, (i + 1) * w5, 6 * rh))
-        }
-        for (i in 0..5) {
-            toolKeys.add(Key(t3[i], Kind.TOOL, c3[i], i * w6, 6 * rh, (i + 1) * w6, 7 * rh))
-        }
-        val t4 = arrayOf("0%", "20%", "40%", "60%", "80%", "刷新")
-        val c4 = arrayOf("alpha_0", "alpha_20", "alpha_40", "alpha_60", "alpha_80", "alpha_refresh")
-        for (i in 0..5) toolKeys.add(Key(t4[i], Kind.TOOL, c4[i], i * w6, 7 * rh, (i + 1) * w6, 8 * rh))
+        val t2 = arrayOf("全选并复制", "剪切", "粘贴并回车")
+        val c2 = arrayOf("select_copy", "cut", "paste_enter")
+        val w3 = w / 3f
+        for (i in 0..2) toolKeys.add(Key(t2[i], Kind.TOOL, c2[i], i * w3, 5 * rh, (i + 1) * w3, 6 * rh))
+        val t3 = arrayOf("←", "→")
+        val c3 = arrayOf("left", "right")
+        val w2 = w / 2f
+        for (i in 0..1) toolKeys.add(Key(t3[i], Kind.TOOL, c3[i], i * w2, 6 * rh, (i + 1) * w2, 7 * rh))
         invalidate()
     }
 
@@ -291,10 +283,6 @@ class KeyboardView(
     private fun drawKey(c: Canvas, k: Key) {
         val cx = (k.l + k.r) / 2f
         val cy = (k.t + k.b) / 2f
-        if (k === pressedKey) {
-            val m = 3f * dp
-            c.drawRoundRect(k.l + m, k.t + m, k.r - m, k.b - m, 8f * dp, 8f * dp, hl)
-        }
         when (k.kind) {
             Kind.BACK -> drawBackspace(c, cx, cy)
             Kind.TO_LETTERS -> drawArrow(c, k, false)
@@ -304,14 +292,9 @@ class KeyboardView(
                 text(c, "。", cx, cy - 0.28f * kh, small)
             }
             Kind.LETTER -> text(c, k.label, cx, cy, big)
+            Kind.SHIFT -> text(c, k.label, cx, cy, big)
             Kind.TEXT -> text(c, k.label, cx, cy, if (panel == Panel.NUM && k.r <= numLeftW + 1f) mid else big)
-            Kind.TOOL -> {
-                val on = (k.value == "hand_left" && hand == 1) ||
-                    (k.value == "hand_right" && hand == 2) ||
-                    k.value == activeTool ||
-                    k.value == "alpha_" + store.bgAlpha
-                text(c, k.label, cx, cy, if (on) accent else mid)
-            }
+            Kind.TOOL -> text(c, k.label, cx, cy, mid)
             else -> if (k.label.isNotEmpty()) text(c, k.label, cx, cy, mid)
         }
     }
@@ -339,6 +322,7 @@ class KeyboardView(
         performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         when (k.kind) {
             Kind.LETTER -> host.onLetter(k.value[0])
+            Kind.SHIFT -> { uppercase = !uppercase; buildKeys(width.toFloat(), height.toFloat()) }
             Kind.SPACE -> host.onSpace()
             Kind.ENTER -> host.onEnter()
             Kind.TEXT -> host.onText(k.value)
@@ -369,10 +353,31 @@ class KeyboardView(
                 fed = 0
                 n = 0
                 if (k != null && k.kind == Kind.LETTER) addPt(e.x, e.y, e.eventTime)
-                if (k != null && k.rep) {
+                longPressFired = false
+                if (k != null && k.kind == Kind.BACK) {
+                    uiHandler.postDelayed(repeater, 400)
+                } else if (k != null && k.rep) {
                     performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     doRepeat(k)
                     uiHandler.postDelayed(repeater, 400)
+                }
+                if (k != null && k.kind == Kind.LETTER && (k.value[0] == 'a' || k.value[0] == 'l' || k.value[0] in "zxcvbn")) {
+                    uiHandler.postDelayed({
+                        if (downKey === k) {
+                            longPressFired = true
+                            when (k.value[0]) {
+                                'a' -> host.onTool("para_start")
+                                'l' -> host.onTool("para_end")
+                                'z' -> host.onTool("alpha_0")
+                                'x' -> host.onTool("alpha_20")
+                                'c' -> host.onTool("alpha_40")
+                                'v' -> host.onTool("alpha_60")
+                                'b' -> host.onTool("alpha_80")
+                                'n' -> host.onTool("alpha_100")
+                            }
+                            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                        }
+                    }, 500)
                 }
                 invalidate()
             }
@@ -410,7 +415,12 @@ class KeyboardView(
                     trail.up(e.eventTime)
                     glide = false
                     host.onGlide(px.copyOf(n), py.copyOf(n), n)
-                } else if (k != null && !k.rep) {
+                } else if (k != null && k.kind == Kind.BACK) {
+                    val deltaY = e.y - dy
+                    if (deltaY < -0.35f * rowH) host.onTool("clear")
+                    else if (deltaY > 0.35f * rowH) host.onTool("undo")
+                    else host.onBackspace()
+                } else if (k != null && !k.rep && !longPressFired) {
                     val upKey = findKey(e.x, e.y)
                     if (upKey === k || hypot(e.x - dx, e.y - dy) < gthr || k.kind == Kind.COMMA) fire(k)
                 }
@@ -420,6 +430,7 @@ class KeyboardView(
                 uiHandler.removeCallbacks(repeater)
                 if (glide) trail.up(e.eventTime)
                 glide = false
+                longPressFired = false
                 downKey = null
                 pressedKey = null
                 invalidate()
