@@ -34,7 +34,7 @@ private class Key(
 
 private enum class Panel { LETTERS, NUM, SYM }
 
-/** 8 行 上面 4 行是字母 数字 符号面板 下面 4 行是常驻工具行 最后一行是背景不透明度档位 */
+/** 6 行：上面 4 行是字母、数字、符号面板，下面 2 行是常驻工具行 */
 class KeyboardView(
     ctx: Context,
     private val host: KeyboardView.Host,
@@ -124,7 +124,7 @@ class KeyboardView(
 
     private fun buildKeys(w: Float, h: Float) {
         if (w <= 0f || h <= 0f) return
-        val rh = h / 7f
+        val rh = h / 6f
         val kwF = w / 10f
         rowH = rh
         big.textSize = 0.058f * w
@@ -223,8 +223,6 @@ class KeyboardView(
         val c2 = arrayOf("select_copy", "paste_enter")
         val w2 = w / 2f
         for (i in 0..1) toolKeys.add(Key(t2[i], Kind.TOOL, c2[i], i * w2, 5 * rh, (i + 1) * w2, 6 * rh))
-        // 最底部收起热区高度减半，不显示文字，点击仍可收起键盘
-        toolKeys.add(Key("", Kind.TOOL, "hide", 0f, 6.375f * rh, w, 6.625f * rh))
         invalidate()
     }
 
