@@ -76,7 +76,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
         val frame = FrameLayout(this)
         kbd = KeyboardView(this, this, decoder, store)
-        frame.addView(kbd, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 7))
+        frame.addView(kbd, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 6))
         panel = PanelView(this, this)
         panel.visibility = View.GONE
         frame.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 4, Gravity.TOP))
