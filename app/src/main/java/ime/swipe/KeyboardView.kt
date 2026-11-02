@@ -219,18 +219,18 @@ class KeyboardView(
         symKeys.add(Key("", Kind.TO_LETTERS, "", 0.011f * w, 3 * rh, 0.133f * w, 4 * rh))
 
         // 常驻三行工具键 从上到下
-        val t1 = arrayOf("左移", "剪贴板", "收起", "常用语", "右移")
-        val c1 = arrayOf("hand_left", "clip", "hide", "phrase", "hand_right")
-        val w5 = w / 5f
-        for (i in 0..4) toolKeys.add(Key(t1[i], Kind.TOOL, c1[i], i * w5, 4 * rh, (i + 1) * w5, 5 * rh))
+        val t1 = arrayOf("左移", "剪贴板", "常用语", "右移")
+        val c1 = arrayOf("hand_left", "clip", "phrase", "hand_right")
+        val w4 = w / 4f
+        for (i in 0..3) toolKeys.add(Key(t1[i], Kind.TOOL, c1[i], i * w4, 4 * rh, (i + 1) * w4, 5 * rh))
         val t2 = arrayOf("全选并复制", "粘贴并回车")
         val c2 = arrayOf("select_copy", "paste_enter")
         val w2 = w / 2f
         for (i in 0..1) toolKeys.add(Key(t2[i], Kind.TOOL, c2[i], i * w2, 5 * rh, (i + 1) * w2, 6 * rh))
-        val t3 = arrayOf("←", "→")
-        val c3 = arrayOf("left", "right")
-        val w2 = w / 2f
-        for (i in 0..1) toolKeys.add(Key(t3[i], Kind.TOOL, c3[i], i * w2, 6 * rh, (i + 1) * w2, 7 * rh))
+        val t3 = arrayOf("←", "→", "收起")
+        val c3 = arrayOf("left", "right", "hide")
+        val w3 = w / 3f
+        for (i in 0..2) toolKeys.add(Key(t3[i], Kind.TOOL, c3[i], i * w3, 6 * rh, (i + 1) * w3, 7 * rh))
         invalidate()
     }
 
@@ -363,7 +363,7 @@ class KeyboardView(
                 }
                 if (k != null && k.kind == Kind.LETTER && (k.value[0] == 'a' || k.value[0] == 'l' || k.value[0] in "zxcvbn")) {
                     uiHandler.postDelayed({
-                        if (downKey === k) {
+                        if (downKey === k && !glide) {
                             longPressFired = true
                             when (k.value[0]) {
                                 'a' -> host.onTool("para_start")
