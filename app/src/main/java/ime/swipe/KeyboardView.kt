@@ -6,6 +6,8 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PorterDuff
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -90,6 +92,16 @@ class KeyboardView(
     private var swipedUp = false
     private var fed = 0
     private var n = 0
+    private val backspaceHandler = Handler(Looper.getMainLooper())
+    private var backspaceLongPressed = false
+    private val backspaceRepeat = object : Runnable {
+        override fun run() {
+            if (downKey?.kind != Kind.BACK) return
+            backspaceLongPressed = true
+            host.onBackspace()
+            backspaceHandler.postDelayed(this, 55L)
+        }
+    }
     private val px = FloatArray(1024)
     private val py = FloatArray(1024)
     private val pt = LongArray(1024)
@@ -322,8 +334,13 @@ class KeyboardView(
                 swipedUp = false
                 fed = 0
                 n = 0
+                backspaceLongPressed = false
+                backspaceHandler.removeCallbacks(backspaceRepeat)
+                if (k != null && k.kind == Kind.BACK) {
+                    backspaceHandler.postDelayed(backspaceRepeat, 400L)
+                }
                 if (k != null && k.kind == Kind.LETTER) addPt(e.x, e.y, e.eventTime)
-                        invalidate()
+                invalidate()
             }
             MotionEvent.ACTION_MOVE -> {
                 val k = downKey ?: return true
@@ -347,10 +364,19 @@ class KeyboardView(
                     }
                 } else if (k.kind == Kind.COMMA) {
                     if (dy - e.y > 0.45f * rowH) swipedUp = true
+                } else if (k.kind == Kind.BACK) {
+                    val deltaY = e.y - dy
+                    if (k.hit(e.x, e.y) && kotlin.math.abs(deltaY) <= 0.35f * rowH) {
+                        // Keep repeating while the finger remains on the backspace key.
+                    } else {
+                        backspaceHandler.removeCallbacks(backspaceRepeat)
+                    }
+                }
                 invalidate()
             }
             MotionEvent.ACTION_UP -> {
                 val k = downKey
+                backspaceHandler.removeCallbacks(backspaceRepeat)
                 downKey = null
                 pressedKey = null
                 if (glide) {
@@ -361,7 +387,7 @@ class KeyboardView(
                     val deltaY = e.y - dy
                     if (deltaY < -0.35f * rowH) host.onTool("clear")
                     else if (deltaY > 0.35f * rowH) host.onTool("undo")
-                    else host.onBackspace()
+                    else if (!backspaceLongPressed) host.onBackspace()
                 } else if (k != null) {
                     val upKey = findKey(e.x, e.y)
                     if (upKey === k || hypot(e.x - dx, e.y - dy) < gthr || k.kind == Kind.COMMA) fire(k)
@@ -369,6 +395,8 @@ class KeyboardView(
                 invalidate()
             }
             MotionEvent.ACTION_CANCEL -> {
+                backspaceHandler.removeCallbacks(backspaceRepeat)
+                backspaceLongPressed = false
                 if (glide) trail.up(e.eventTime)
                 glide = false
                 downKey = null
