@@ -373,6 +373,19 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         hidePanel()
     }
 
+    override fun onPanelDelete(index: Int) {
+        val items = if (panelKind == 1) clips else phrases
+        if (index !in items.indices) return
+        items.removeAt(index)
+        if (panelKind == 1) {
+            store.putList("clips", clips)
+            panel.show(1, clips)
+        } else {
+            store.putList("phrases", phrases)
+            panel.show(2, phrases)
+        }
+    }
+
     override fun onPanelAction(kind: Int) {
         if (kind == 1) {
             clips.clear()
