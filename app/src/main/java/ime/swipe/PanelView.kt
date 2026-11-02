@@ -16,6 +16,7 @@ class PanelView(ctx: Context, private val cb: PanelView.Callback) : LinearLayout
         fun onPanelPick(text: String)
         fun onPanelBack()
         fun onPanelAction(kind: Int)
+        fun onPanelDelete(index: Int)
     }
 
     private val d = resources.displayMetrics.density
@@ -89,6 +90,10 @@ class PanelView(ctx: Context, private val cb: PanelView.Callback) : LinearLayout
             tv.ellipsize = TextUtils.TruncateAt.END
             tv.setPadding((18 * d).toInt(), (12 * d).toInt(), (18 * d).toInt(), (12 * d).toInt())
             tv.setOnClickListener { cb.onPanelPick(items[i]) }
+            tv.setOnLongClickListener {
+                cb.onPanelDelete(i)
+                true
+            }
             list.addView(tv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             val line = View(context)
             line.setBackgroundColor(Color.rgb(34, 34, 34))
