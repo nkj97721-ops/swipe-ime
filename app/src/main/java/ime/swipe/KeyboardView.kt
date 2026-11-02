@@ -220,10 +220,8 @@ class KeyboardView(
         val c2 = arrayOf("select_copy", "paste_enter")
         val w2 = w / 2f
         for (i in 0..1) toolKeys.add(Key(t2[i], Kind.TOOL, c2[i], i * w2, 5 * rh, (i + 1) * w2, 6 * rh))
-        val t3 = arrayOf("←", "→", "收起")
-        val c3 = arrayOf("left", "right", "hide")
-        val w3 = w / 3f
-        for (i in 0..2) toolKeys.add(Key(t3[i], Kind.TOOL, c3[i], i * w3, 6 * rh, (i + 1) * w3, 7 * rh))
+        // 最底部整行只保留居中的收起键，点击后收起键盘
+        toolKeys.add(Key("收起", Kind.TOOL, "hide", 0f, 6 * rh, w, 7 * rh))
         invalidate()
     }
 
