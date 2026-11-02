@@ -94,39 +94,6 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         if (::panel.isInitialized) hidePanel()
     }
 
-    /**
-     * 编辑器光标/选区可能被外部操作移动。
-     * 只要系统报告的选区不再位于当前 composing 区域末尾，就丢弃本地拼音状态，
-     * 避免下一次按键把旧拼音写到新的光标位置。
-     */
-    override fun onUpdateSelection(
-        oldSelStart: Int,
-        oldSelEnd: Int,
-        newSelStart: Int,
-        newSelEnd: Int,
-        candidatesStart: Int,
-        candidatesEnd: Int
-    ) {
-        super.onUpdateSelection(
-            oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd
-        )
-        if (mode == 0) return
-
-        val selectionStillAtCompositionEnd =
-            newSelStart == newSelEnd &&
-            candidatesStart >= 0 &&
-            candidatesEnd >= candidatesStart &&
-            newSelStart == candidatesEnd
-
-        if (!selectionStillAtCompositionEnd) {
-            composing.setLength(0)
-            mode = 0
-            cands = emptyList()
-            glideWords = emptyList()
-            if (::candRow.isInitialized) clearCands()
-        }
-    }
-
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
         currentInputConnection?.finishComposingText()
@@ -354,8 +321,6 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
             "undo" -> ctrlKey(KeyEvent.KEYCODE_Z)
             "left" -> sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_LEFT)
             "right" -> sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_RIGHT)
-            "para_start" -> moveParagraph(-1)
-            "para_end" -> moveParagraph(1)
         }
     }
 
@@ -365,27 +330,6 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         val meta = KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON
         ic.sendKeyEvent(KeyEvent(t, t, KeyEvent.ACTION_DOWN, code, 0, meta))
         ic.sendKeyEvent(KeyEvent(t, t, KeyEvent.ACTION_UP, code, 0, meta))
-    }
-
-    /** 光标移到段首或段尾。段以换行符分隔；只发送方向键，不用 commitText 改光标。 */
-    private fun moveParagraph(dir: Int) {
-        val ic = currentInputConnection ?: return
-        val selected = ic.getSelectedText(0)?.isNotEmpty() == true
-        val code = if (dir < 0) KeyEvent.KEYCODE_DPAD_LEFT else KeyEvent.KEYCODE_DPAD_RIGHT
-
-        // 有选区时先向对应方向折叠，再基于折叠后的真实光标位置计算距离。
-        if (selected) sendDownUpKeyEvents(code)
-
-        val delta = if (dir < 0) {
-            val before = ic.getTextBeforeCursor(5000, 0)?.toString() ?: return
-            before.length - (before.lastIndexOf('\n') + 1)
-        } else {
-            val after = ic.getTextAfterCursor(5000, 0)?.toString() ?: return
-            val newline = after.indexOf('\n')
-            if (newline < 0) after.length else newline
-        }
-
-        repeat(delta) { sendDownUpKeyEvents(code) }
     }
 
     // ---------- 剪贴板与常用语 ----------
