@@ -8,6 +8,9 @@ import android.graphics.drawable.ColorDrawable
 import android.inputmethodservice.InputMethodService
 import android.os.SystemClock
 import android.view.Gravity
+import android.view.MotionEvent
+import android.view.ViewConfiguration
+import android.widget.ScrollView
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
@@ -25,6 +28,9 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private lateinit var panel: PanelView
     private lateinit var candRow: LinearLayout
     private lateinit var candScroll: CandidateScrollView
+    private lateinit var candPages: LinearLayout
+    private val candidatePageScrolls = ArrayList<ScrollView>()
+    private var candidatesExpanded = false
 
     private val composing = StringBuilder()
     private var mode = 0 // 0 空闲 1 拼音输入 2 滑行结果
@@ -61,12 +67,20 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
 
-        candScroll = HorizontalScrollView(this)
+        candScroll = CandidateScrollView(
+            this,
+            onVerticalSwipe = { up -> setCandidatesExpanded(up) },
+            onLongPressScroll = { dy ->
+                val page = (candScroll.scrollX / maxOf(1, resources.displayMetrics.widthPixels))
+                    .coerceIn(0, maxOf(0, candidatePageScrolls.lastIndex))
+                candidatePageScrolls.getOrNull(page)?.scrollBy(0, dy)
+            }
+        )
         candScroll.isHorizontalScrollBarEnabled = false
-        candRow = LinearLayout(this)
-        candRow.orientation = LinearLayout.HORIZONTAL
+        candPages = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        candRow = candPages
         candScroll.addView(
-            candRow,
+            candPages,
             ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT)
         )
         root.addView(
@@ -114,26 +128,80 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     // ---------- 候选栏 ----------
 
     private fun clearCands() {
-        candRow.removeAllViews()
+        candPages.removeAllViews()
+        candidatePageScrolls.clear()
+        candScroll.scrollTo(0, 0)
+    }
+
+    private fun setCandidatesExpanded(expanded: Boolean) {
+        if (!::candScroll.isInitialized || candidatesExpanded == expanded) return
+        candidatesExpanded = expanded
+        val d = resources.displayMetrics.density
+        val lp = candScroll.layoutParams
+        lp.height = ((if (expanded) 156 else 52) * d).toInt()
+        candScroll.layoutParams = lp
     }
 
     private fun showCands(items: List<String>) {
-        candRow.removeAllViews()
+        candPages.removeAllViews()
+        candidatePageScrolls.clear()
         val d = resources.displayMetrics.density
+        val pageWidth = resources.displayMetrics.widthPixels
+        var page = newCandidatePage(pageWidth)
+        var rows = ((page.getChildAt(0) as ScrollView).getChildAt(0) as LinearLayout)
+        var row = newCandidateRow()
+        rows.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (52 * d).toInt()))
+        var usedWidth = 0
+        var rowsInPage = 1
+
         for (i in items.indices) {
-            val tv = TextView(this)
-            tv.text = items[i]
-            tv.setTextColor(Color.WHITE)
-            tv.textSize = 22f
-            tv.gravity = Gravity.CENTER_VERTICAL
-            tv.setPadding((16 * d).toInt(), 0, (16 * d).toInt(), 0)
-            tv.setOnClickListener { pick(i) }
-            candRow.addView(
-                tv,
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            val tv = TextView(this).apply {
+                text = items[i]
+                setTextColor(Color.WHITE)
+                textSize = 22f
+                gravity = Gravity.CENTER
+                setPadding((16 * d).toInt(), 0, (16 * d).toInt(), 0)
+                setOnClickListener { pick(i) }
+            }
+            tv.measure(
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+                View.MeasureSpec.makeMeasureSpec((52 * d).toInt(), View.MeasureSpec.EXACTLY)
             )
+            val itemWidth = tv.measuredWidth.coerceAtMost(pageWidth)
+            if (usedWidth > 0 && usedWidth + itemWidth > pageWidth) {
+                if (rowsInPage >= 12) {
+                    page = newCandidatePage(pageWidth)
+                    rows = ((page.getChildAt(0) as ScrollView).getChildAt(0) as LinearLayout)
+                    rowsInPage = 0
+                }
+                row = newCandidateRow()
+                rows.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (52 * d).toInt()))
+                rowsInPage++
+                usedWidth = 0
+            }
+            row.addView(tv, LinearLayout.LayoutParams(itemWidth, ViewGroup.LayoutParams.MATCH_PARENT))
+            usedWidth += itemWidth
         }
         candScroll.scrollTo(0, 0)
+        candidatePageScrolls.forEach { it.scrollTo(0, 0) }
+    }
+
+    private fun newCandidateRow(): LinearLayout =
+        LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+
+    private fun newCandidatePage(pageWidth: Int): LinearLayout {
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val scroll = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            addView(content, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        candidatePageScrolls.add(scroll)
+        val page = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        }
+        candPages.addView(page, LinearLayout.LayoutParams(pageWidth, ViewGroup.LayoutParams.MATCH_PARENT))
+        return page
     }
 
     private fun refreshTyped() {
@@ -417,4 +485,77 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         }
     }
 
+}
+
+
+/** Candidate bar: swipe up/down to expand/collapse, swipe left/right to page,
+ * long-press then drag vertically to scroll through the current page. */
+private class CandidateScrollView(
+    context: Context,
+    private val onVerticalSwipe: (Boolean) -> Unit,
+    private val onLongPressScroll: (Int) -> Unit
+) : HorizontalScrollView(context) {
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private val handler = Handler(Looper.getMainLooper())
+    private var downX = 0f
+    private var downY = 0f
+    private var lastY = 0f
+    private var verticalGesture = false
+    private var longPressed = false
+    private val longPress = Runnable { longPressed = true }
+
+    override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                downX = ev.x
+                downY = ev.y
+                lastY = ev.y
+                verticalGesture = false
+                longPressed = false
+                handler.removeCallbacks(longPress)
+                handler.postDelayed(longPress, 450L)
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = ev.x - downX
+                val dy = ev.y - downY
+                if (!verticalGesture && kotlin.math.abs(dy) > touchSlop && kotlin.math.abs(dy) > kotlin.math.abs(dx)) {
+                    verticalGesture = true
+                    return true
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> handler.removeCallbacks(longPress)
+        }
+        return super.onInterceptTouchEvent(ev)
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (!verticalGesture) {
+            if (event.actionMasked == MotionEvent.ACTION_UP) {
+                handler.removeCallbacks(longPress)
+                val pageWidth = width.coerceAtLeast(1)
+                val maxScroll = ((getChildAt(0)?.width ?: width) - width).coerceAtLeast(0)
+                val target = ((scrollX + pageWidth / 2) / pageWidth) * pageWidth
+                smoothScrollTo(target.coerceIn(0, maxScroll), 0)
+            }
+            return super.onTouchEvent(event)
+        }
+        when (event.actionMasked) {
+            MotionEvent.ACTION_MOVE -> {
+                if (longPressed) onLongPressScroll((lastY - event.y).toInt())
+                lastY = event.y
+            }
+            MotionEvent.ACTION_UP -> {
+                handler.removeCallbacks(longPress)
+                if (!longPressed) onVerticalSwipe(event.y < downY)
+                verticalGesture = false
+                longPressed = false
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                handler.removeCallbacks(longPress)
+                verticalGesture = false
+                longPressed = false
+            }
+        }
+        return true
+    }
 }
