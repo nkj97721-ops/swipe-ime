@@ -11,7 +11,6 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewConfiguration
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
@@ -35,11 +34,6 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private var clips: MutableList<String> = mutableListOf()
     private var phrases: MutableList<String> = mutableListOf()
     private var panelKind = 0 // 0 无 1 剪贴板 2 常用语
-    private var keyboardHeightPx = 0
-    private var resizeDownY = 0f
-    private var resizeDownX = 0f
-    private var resizeStartHeight = 0
-    private var resizingKeyboard = false
 
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "bg_alpha") applyAlpha()
@@ -64,7 +58,6 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     override fun onCreateInputView(): View {
         val d = resources.displayMetrics.density
         val rowPx = (57 * d).toInt()
-        keyboardHeightPx = (store.getFloat("keyboard_height_dp", 399f).coerceIn(280f, 520f) * d).toInt()
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
 
@@ -83,54 +76,11 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
         val frame = FrameLayout(this)
         kbd = KeyboardView(this, this, decoder, store)
-        frame.addView(kbd, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, keyboardHeightPx))
+        frame.addView(kbd, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 7))
         panel = PanelView(this, this)
         panel.visibility = View.GONE
         frame.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 4, Gravity.TOP))
-        root.addView(frame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, keyboardHeightPx))
-
-        // 在候选栏上下滑动调整键盘高度；上滑增高，下滑降低，横向滑动仍用于浏览候选词。
-        val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
-        candScroll.setOnTouchListener { _, event ->
-            when (event.actionMasked) {
-                android.view.MotionEvent.ACTION_DOWN -> {
-                    resizeDownY = event.rawY
-                    resizeDownX = event.x
-                    resizeStartHeight = keyboardHeightPx
-                    resizingKeyboard = false
-                    false
-                }
-                android.view.MotionEvent.ACTION_MOVE -> {
-                    val dy = event.rawY - resizeDownY
-                    val dx = event.x - resizeDownX
-                    if (!resizingKeyboard &&
-                        kotlin.math.abs(dy) > touchSlop &&
-                        kotlin.math.abs(dy) > kotlin.math.abs(dx) * 1.2f
-                    ) {
-                        resizingKeyboard = true
-                    }
-                    if (resizingKeyboard) {
-                        val minHeight = (280f * d).toInt()
-                        val maxHeight = (520f * d).toInt()
-                        keyboardHeightPx = (resizeStartHeight - dy.toInt()).coerceIn(minHeight, maxHeight)
-                        frame.layoutParams = frame.layoutParams.apply { height = keyboardHeightPx }
-                        kbd.layoutParams = kbd.layoutParams.apply { height = keyboardHeightPx }
-                        frame.requestLayout()
-                        true
-                    } else false
-                }
-                android.view.MotionEvent.ACTION_UP,
-                android.view.MotionEvent.ACTION_CANCEL -> {
-                    val wasResizing = resizingKeyboard
-                    if (wasResizing) {
-                        store.putFloat("keyboard_height_dp", keyboardHeightPx / d)
-                        resizingKeyboard = false
-                    }
-                    wasResizing
-                }
-                else -> resizingKeyboard
-            }
-        }
+        root.addView(frame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 7))
 
         applyAlpha()
         return root
