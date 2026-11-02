@@ -942,13 +942,15 @@ jobs:
                   val c1 = arrayOf("hand_left", "clip", "hide", "phrase", "hand_right")
                   val w5 = w / 5f
                   for (i in 0..4) toolKeys.add(Key(t1[i], Kind.TOOL, c1[i], i * w5, 4 * rh, (i + 1) * w5, 5 * rh))
-                  val t2 = arrayOf("清空", "全选", "剪切", "复制", "粘贴", "撤销")
-                  val c2 = arrayOf("clear", "selall", "cut", "copy", "paste", "undo")
+                  val t2 = arrayOf("清空", "全选并复制", "剪切", "粘贴并回车", "撤销")
+                  val c2 = arrayOf("clear", "select_copy", "cut", "paste_enter", "undo")
                   val t3 = arrayOf("段首", "行首", "左移", "右移", "行尾", "段尾")
                   val c3 = arrayOf("para_start", "line_start", "left", "right", "line_end", "para_end")
                   val w6 = w / 6f
+                  for (i in 0..4) {
+                      toolKeys.add(Key(t2[i], Kind.TOOL, c2[i], i * w5, 5 * rh, (i + 1) * w5, 6 * rh))
+                  }
                   for (i in 0..5) {
-                      toolKeys.add(Key(t2[i], Kind.TOOL, c2[i], i * w6, 5 * rh, (i + 1) * w6, 6 * rh))
                       toolKeys.add(Key(t3[i], Kind.TOOL, c3[i], i * w6, 6 * rh, (i + 1) * w6, 7 * rh))
                   }
                   val t4 = arrayOf("0%", "20%", "40%", "60%", "80%", "刷新")
@@ -1458,10 +1460,15 @@ jobs:
                           ic?.performContextMenuAction(android.R.id.selectAll)
                           sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
                       }
-                      "selall" -> ic?.performContextMenuAction(android.R.id.selectAll)
+                      "select_copy" -> {
+                          ic?.performContextMenuAction(android.R.id.selectAll)
+                          ic?.performContextMenuAction(android.R.id.copy)
+                      }
                       "cut" -> ic?.performContextMenuAction(android.R.id.cut)
-                      "copy" -> ic?.performContextMenuAction(android.R.id.copy)
-                      "paste" -> ic?.performContextMenuAction(android.R.id.paste)
+                      "paste_enter" -> {
+                          ic?.performContextMenuAction(android.R.id.paste)
+                          doEnter()
+                      }
                       "undo" -> ctrlKey(KeyEvent.KEYCODE_Z)
                       "left" -> sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_LEFT)
                       "right" -> sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_RIGHT)
