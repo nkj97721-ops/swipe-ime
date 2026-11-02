@@ -316,6 +316,17 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
             "undo" -> ctrlKey(KeyEvent.KEYCODE_Z)
             "left" -> sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_LEFT)
             "right" -> sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_RIGHT)
+            "left_home" -> ic?.let {
+                it.performContextMenuAction(android.R.id.selectAll)
+                it.setSelection(0, 0)
+            }
+            "right_end" -> ic?.let {
+                it.performContextMenuAction(android.R.id.selectAll)
+                val selectedLength = it.getSelectedText(0)?.length
+                    ?: ((it.getTextBeforeCursor(100000, 0)?.length ?: 0) +
+                        (it.getTextAfterCursor(100000, 0)?.length ?: 0))
+                it.setSelection(selectedLength, selectedLength)
+            }
         }
     }
 
