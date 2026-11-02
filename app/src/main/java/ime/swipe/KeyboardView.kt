@@ -64,7 +64,6 @@ class KeyboardView(
     private var numLeftW = 0f
     private var rowH = 0f
     private var gthr = 30f
-    private var hand = store.hand
     private var bgA = store.bgAlpha * 255 / 100
     private var uppercase = false
     private var longPressFired = false
@@ -118,12 +117,6 @@ class KeyboardView(
         invalidate()
     }
 
-    private fun setHand(h: Int) {
-        hand = h
-        store.hand = h
-        buildKeys(width.toFloat(), height.toFloat())
-    }
-
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         super.onSizeChanged(w, h, ow, oh)
         buildKeys(w.toFloat(), h.toFloat())
@@ -146,10 +139,9 @@ class KeyboardView(
         symKeys.clear()
         toolKeys.clear()
 
-        // 字母面板 单手模式时三行字母压缩到一侧
-        val scale = if (hand == 0) 1f else 0.8f
-        val bw = w * scale
-        val ox = if (hand == 2) w - bw else 0f
+        // 字母面板固定全宽，移除左手/右手单手布局
+        val bw = w
+        val ox = 0f
         val kwL = bw / 10f
         gthr = 0.55f * kwL
         val rows = arrayOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
@@ -195,10 +187,11 @@ class KeyboardView(
             }
         }
         numKeys.add(Key("符号", Kind.TO_SYM, "", x1, 3 * rh, x2, 4 * rh))
-        numKeys.add(Key("0", Kind.TEXT, "0", x2, 3 * rh, x3, 4 * rh))
+        // 0 与空格互换位置，小数点保持原位
+        numKeys.add(Key("空格", Kind.SPACE, " ", x2, 3 * rh, x3, 4 * rh))
         numKeys.add(Key(".", Kind.TEXT, ".", x3, 3 * rh, x4, 4 * rh))
         numKeys.add(Key("", Kind.BACK, "", x4, 0f, w, rh))
-        numKeys.add(Key("空格", Kind.SPACE, " ", x4, rh, w, 2 * rh))
+        numKeys.add(Key("0", Kind.TEXT, "0", x4, rh, w, 2 * rh))
         numKeys.add(Key("换行", Kind.ENTER, "", x4, 3 * rh, w, 4 * rh))
 
         // 符号面板
@@ -220,7 +213,7 @@ class KeyboardView(
 
         // 常驻三行工具键 从上到下
         val t1 = arrayOf("左移", "剪贴板", "常用语", "右移")
-        val c1 = arrayOf("hand_left", "clip", "phrase", "hand_right")
+        val c1 = arrayOf("left", "clip", "phrase", "right")
         val w4 = w / 4f
         for (i in 0..3) toolKeys.add(Key(t1[i], Kind.TOOL, c1[i], i * w4, 4 * rh, (i + 1) * w4, 5 * rh))
         val t2 = arrayOf("全选并复制", "粘贴并回车")
@@ -330,11 +323,7 @@ class KeyboardView(
             Kind.TO_SYM -> panel = Panel.SYM
             Kind.TO_LETTERS -> panel = Panel.LETTERS
             Kind.COMMA -> host.onText(if (swipedUp) "。" else "，")
-            Kind.TOOL -> when (k.value) {
-                "hand_left" -> setHand(if (hand == 1) 0 else 1)
-                "hand_right" -> setHand(if (hand == 2) 0 else 2)
-                else -> host.onTool(k.value)
-            }
+            Kind.TOOL -> host.onTool(k.value)
             Kind.BACK -> {}
         }
         invalidate()
