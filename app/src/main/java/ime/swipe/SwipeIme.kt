@@ -11,6 +11,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.graphics.Rect
 import android.view.WindowInsets
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
@@ -26,6 +27,9 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private lateinit var panel: PanelView
     private lateinit var candRow: LinearLayout
     private lateinit var candScroll: HorizontalScrollView
+    private lateinit var imeRoot: FrameLayout
+    private lateinit var movingContent: LinearLayout
+    private lateinit var baseBackground: View
 
     private val composing = StringBuilder()
     private var mode = 0 // 0 空闲 1 拼音输入 2 滑行结果
@@ -36,9 +40,10 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private var phrases: MutableList<String> = mutableListOf()
     private var panelKind = 0 // 0 无 1 剪贴板 2 常用语
     private var dragStartRawY = 0f
-    private var dragStartTopY = 0
-    private var dragMinTopY = 0
-    private var dragMaxTopY = 0
+    private var dragStartOffsetY = 0f
+    private var dragMinOffsetY = 0f
+    private var dragMaxOffsetY = 0f
+    private var originalContentTopInset = 0
 
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "bg_alpha") applyAlpha()
@@ -63,8 +68,34 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     override fun onCreateInputView(): View {
         val d = resources.displayMetrics.density
         val rowPx = (57 * d).toInt()
-        val root = LinearLayout(this)
-        root.orientation = LinearLayout.VERTICAL
+        val candidateHeight = (52 * d).toInt()
+        val keyboardHeight = rowPx * 6
+        val contentHeight = candidateHeight + keyboardHeight
+
+        // Use a full-height IME surface. The keyboard itself remains a compact
+        // bottom-anchored panel that can move independently inside this surface.
+        imeRoot = FrameLayout(this).apply {
+            setBackgroundColor(Color.TRANSPARENT)
+            clipChildren = false
+            clipToPadding = false
+        }
+        baseBackground = View(this).apply {
+            setBackgroundColor(Color.argb(store.bgAlpha * 255 / 100, 0, 0, 0))
+        }
+        imeRoot.addView(
+            baseBackground,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                contentHeight,
+                Gravity.BOTTOM
+            )
+        )
+
+        movingContent = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            clipChildren = false
+            clipToPadding = false
+        }
 
         candScroll = HorizontalScrollView(this)
         candScroll.isHorizontalScrollBarEnabled = false
@@ -74,21 +105,62 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
             candRow,
             ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT)
         )
-        root.addView(
+        movingContent.addView(
             candScroll,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (52 * d).toInt())
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, candidateHeight)
         )
 
         val frame = FrameLayout(this)
         kbd = KeyboardView(this, this, decoder, store)
-        frame.addView(kbd, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 6))
+        frame.addView(kbd, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, keyboardHeight))
         panel = PanelView(this, this)
         panel.visibility = View.GONE
         frame.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 4, Gravity.TOP))
-        root.addView(frame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 6))
+        movingContent.addView(
+            frame,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, keyboardHeight)
+        )
 
+        imeRoot.addView(
+            movingContent,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                contentHeight,
+                Gravity.BOTTOM
+            )
+        )
+
+        window?.window?.setLayout(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        )
         applyAlpha()
-        return root
+        return imeRoot
+    }
+
+    override fun onComputeInsets(outInsets: Insets) {
+        super.onComputeInsets(outInsets)
+        if (!::imeRoot.isInitialized || !::movingContent.isInitialized ||
+            imeRoot.height == 0 || movingContent.height == 0
+        ) return
+
+        val location = IntArray(2)
+        movingContent.getLocationInWindow(location)
+        val rootLocation = IntArray(2)
+        imeRoot.getLocationInWindow(rootLocation)
+        val top = (location[1] - rootLocation[1]).coerceAtLeast(0)
+        val bottom = (top + movingContent.height).coerceAtMost(imeRoot.height)
+
+        // Keep the app's resize inset fixed at the keyboard's original footprint.
+        if (originalContentTopInset == 0) {
+            originalContentTopInset = (imeRoot.height - movingContent.height).coerceAtLeast(0)
+        }
+        outInsets.contentTopInsets = originalContentTopInset
+        outInsets.visibleTopInsets = top
+        outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_REGION
+        outInsets.touchableRegion.set(
+            Rect(0, top, imeRoot.width, bottom)
+        )
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
@@ -111,6 +183,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private fun applyAlpha() {
         if (!::kbd.isInitialized) return
         val a = store.bgAlpha * 255 / 100
+        if (::baseBackground.isInitialized) baseBackground.setBackgroundColor(Color.argb(a, 0, 0, 0))
         candScroll.setBackgroundColor(Color.argb(a, 0, 0, 0))
         kbd.setBgAlpha(a)
         panel.setBgAlpha(a)
@@ -243,30 +316,25 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     }
 
     override fun onSpaceDragStart(rawY: Float) {
-        val imeWindow = window?.window ?: return
-        val decor = imeWindow.decorView
-        val attrs = imeWindow.attributes
-        val insets = decor.rootWindowInsets?.getInsets(WindowInsets.Type.systemBars())
-        val topInset = insets?.top ?: 0
-        val bottomInset = insets?.bottom ?: 0
-        val screenHeight = resources.displayMetrics.heightPixels
-        val isTopGravity = (attrs.gravity and Gravity.VERTICAL_GRAVITY_MASK) == Gravity.TOP
-        dragStartTopY = if (isTopGravity) attrs.y else screenHeight - decor.height - bottomInset
-        dragMinTopY = topInset
-        dragMaxTopY = (screenHeight - decor.height - bottomInset).coerceAtLeast(dragMinTopY)
-        dragStartTopY = dragStartTopY.coerceIn(dragMinTopY, dragMaxTopY)
+        if (!::imeRoot.isInitialized || !::movingContent.isInitialized) return
         dragStartRawY = rawY
-        attrs.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        attrs.y = dragStartTopY
-        imeWindow.attributes = attrs
+        dragStartOffsetY = movingContent.translationY
+        val rootLocation = IntArray(2)
+        imeRoot.getLocationOnScreen(rootLocation)
+        val contentTop = movingContent.top + dragStartOffsetY
+        val contentBottom = contentTop + movingContent.height
+        dragMinOffsetY = -contentTop
+        val bottomInset = imeRoot.rootWindowInsets
+            ?.getInsets(WindowInsets.Type.navigationBars())?.bottom ?: 0
+        dragMaxOffsetY = (imeRoot.height + bottomInset - contentBottom).toFloat()
+            .coerceAtLeast(dragStartOffsetY)
     }
 
     override fun onSpaceDrag(rawY: Float) {
-        val imeWindow = window?.window ?: return
-        val attrs = imeWindow.attributes
-        attrs.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        attrs.y = (dragStartTopY + (rawY - dragStartRawY).toInt()).coerceIn(dragMinTopY, dragMaxTopY)
-        imeWindow.attributes = attrs
+        if (!::movingContent.isInitialized) return
+        movingContent.translationY =
+            (dragStartOffsetY + rawY - dragStartRawY).coerceIn(dragMinOffsetY, dragMaxOffsetY)
+        imeRoot.invalidate()
     }
 
     override fun onSpaceDragEnd() {
