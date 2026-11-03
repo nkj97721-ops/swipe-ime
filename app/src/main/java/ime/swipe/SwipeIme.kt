@@ -265,7 +265,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         val imeWindow = window?.window ?: return
         val attrs = imeWindow.attributes
         attrs.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        attrs.y = (dragStartTopY - (rawY - dragStartRawY).toInt()).coerceIn(dragMinTopY, dragMaxTopY)
+        attrs.y = (dragStartTopY + (rawY - dragStartRawY).toInt()).coerceIn(dragMinTopY, dragMaxTopY)
         imeWindow.attributes = attrs
     }
 
