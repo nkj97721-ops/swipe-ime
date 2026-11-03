@@ -399,7 +399,7 @@ class KeyboardView(
                         }
                     }
                 } else if (k.kind == Kind.SPACE) {
-                    if (!spaceDragging && kotlin.math.abs(e.rawY - spaceDownRawY) > spaceTouchSlop) {
+                    if (!spaceLongPressed && !spaceDragging && kotlin.math.abs(e.rawY - spaceDownRawY) > spaceTouchSlop) {
                         spaceLongPressHandler.removeCallbacks(spaceLongPress)
                         spaceDragging = true
                         host.onSpaceDragStart(spaceDownRawY)
