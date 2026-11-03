@@ -11,6 +11,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
@@ -34,6 +35,10 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private var clips: MutableList<String> = mutableListOf()
     private var phrases: MutableList<String> = mutableListOf()
     private var panelKind = 0 // 0 无 1 剪贴板 2 常用语
+    private var dragStartRawY = 0f
+    private var dragStartTopY = 0
+    private var dragMinTopY = 0
+    private var dragMaxTopY = 0
 
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "bg_alpha") applyAlpha()
@@ -235,6 +240,37 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         settle()
         hidePanel()
         requestHideSelf(0)
+    }
+
+    override fun onSpaceDragStart(rawY: Float) {
+        val imeWindow = window?.window ?: return
+        val decor = imeWindow.decorView
+        val attrs = imeWindow.attributes
+        val insets = decor.rootWindowInsets?.getInsets(WindowInsets.Type.systemBars())
+        val topInset = insets?.top ?: 0
+        val bottomInset = insets?.bottom ?: 0
+        val screenHeight = resources.displayMetrics.heightPixels
+        val isTopGravity = (attrs.gravity and Gravity.VERTICAL_GRAVITY_MASK) == Gravity.TOP
+        dragStartTopY = if (isTopGravity) attrs.y else screenHeight - decor.height - bottomInset
+        dragMinTopY = topInset
+        dragMaxTopY = (screenHeight - decor.height - bottomInset).coerceAtLeast(dragMinTopY)
+        dragStartTopY = dragStartTopY.coerceIn(dragMinTopY, dragMaxTopY)
+        dragStartRawY = rawY
+        attrs.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        attrs.y = dragStartTopY
+        imeWindow.attributes = attrs
+    }
+
+    override fun onSpaceDrag(rawY: Float) {
+        val imeWindow = window?.window ?: return
+        val attrs = imeWindow.attributes
+        attrs.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        attrs.y = (dragStartTopY - (rawY - dragStartRawY).toInt()).coerceIn(dragMinTopY, dragMaxTopY)
+        imeWindow.attributes = attrs
+    }
+
+    override fun onSpaceDragEnd() {
+        // 松手后保留当前位置，不吸附、不回弹。
     }
 
     override fun onSpace() {
