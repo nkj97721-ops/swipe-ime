@@ -1,5 +1,6 @@
 package ime.swipe
 
+import android.app.AlertDialog
 import android.content.Context
 import android.graphics.Color
 import android.text.TextUtils
@@ -62,6 +63,24 @@ class PanelView(ctx: Context, private val cb: PanelView.Callback) : LinearLayout
         addView(sv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
     }
 
+    private fun showFullText(value: String) {
+        val content = TextView(context)
+        content.text = value
+        content.setTextColor(Color.WHITE)
+        content.textSize = 16f
+        content.setTextIsSelectable(true)
+        content.setPadding((20 * d).toInt(), (16 * d).toInt(), (20 * d).toInt(), (16 * d).toInt())
+
+        val scroll = ScrollView(context)
+        scroll.addView(content, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        AlertDialog.Builder(context)
+            .setTitle("完整内容")
+            .setView(scroll)
+            .setPositiveButton("粘贴") { _, _ -> cb.onPanelPick(value) }
+            .setNegativeButton("关闭", null)
+            .show()
+    }
+
     fun setBgAlpha(a: Int) {
         setBackgroundColor(Color.argb(a, 0, 0, 0))
     }
@@ -82,19 +101,35 @@ class PanelView(ctx: Context, private val cb: PanelView.Callback) : LinearLayout
             return
         }
         for (i in items.indices) {
+            val row = LinearLayout(context)
+            row.orientation = LinearLayout.HORIZONTAL
+            row.gravity = Gravity.CENTER_VERTICAL
+
+            val value = items[i]
             val tv = TextView(context)
-            tv.text = items[i]
+            tv.text = value
             tv.setTextColor(Color.WHITE)
             tv.textSize = 17f
             tv.maxLines = 2
             tv.ellipsize = TextUtils.TruncateAt.END
-            tv.setPadding((18 * d).toInt(), (12 * d).toInt(), (18 * d).toInt(), (12 * d).toInt())
-            tv.setOnClickListener { cb.onPanelPick(items[i]) }
+            tv.setPadding((18 * d).toInt(), (12 * d).toInt(), (8 * d).toInt(), (12 * d).toInt())
+            tv.setOnClickListener { cb.onPanelPick(value) }
             tv.setOnLongClickListener {
                 cb.onPanelDelete(i)
                 true
             }
-            list.addView(tv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            row.addView(tv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+            val detail = TextView(context)
+            detail.text = "查看"
+            detail.setTextColor(Color.rgb(143, 176, 255))
+            detail.textSize = 14f
+            detail.gravity = Gravity.CENTER
+            detail.setPadding((12 * d).toInt(), (12 * d).toInt(), (18 * d).toInt(), (12 * d).toInt())
+            detail.setOnClickListener { showFullText(value) }
+            row.addView(detail, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+            list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             val line = View(context)
             line.setBackgroundColor(Color.rgb(34, 34, 34))
             list.addView(line, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
