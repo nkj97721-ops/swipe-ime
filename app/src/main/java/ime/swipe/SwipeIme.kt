@@ -363,7 +363,9 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         if (ic == null) return
         try {
             if (!ic.performContextMenuAction(android.R.id.selectAll)) return
-            val selected = ic.getSelectedText(0)?.toString() ?: return
+            val selected = ic.getSelectedText(0)?.toString()
+                ?: ic.getTextAfterCursor(1_000_000, 0)?.toString()
+                ?: return
             if (selected.isEmpty()) return
 
             val cm = clipboardManager ?: return
