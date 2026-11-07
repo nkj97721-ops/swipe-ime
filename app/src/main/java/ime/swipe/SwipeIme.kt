@@ -22,6 +22,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private val decoder = GlideDecoder(lex)
     private lateinit var store: Store
     private lateinit var kbd: KeyboardView
+    private lateinit var keyboardFrame: FrameLayout
     private lateinit var panel: PanelView
     private lateinit var candRow: LinearLayout
     private lateinit var candScroll: HorizontalScrollView
@@ -72,13 +73,13 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         )
         root.addView(candScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (52 * d).toInt()))
 
-        val frame = FrameLayout(this)
+        keyboardFrame = FrameLayout(this)
         kbd = KeyboardView(this, this, decoder, store)
-        frame.addView(kbd, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 6))
+        keyboardFrame.addView(kbd, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 6))
         panel = PanelView(this, this)
         panel.visibility = View.GONE
-        frame.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 4, Gravity.TOP))
-        root.addView(frame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 6))
+        keyboardFrame.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 4, Gravity.TOP))
+        root.addView(keyboardFrame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 6))
 
         applyAlpha()
         return root
@@ -188,6 +189,18 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private fun settle() {
         if (mode == 1) settleTyped()
         if (mode == 2) finishGlide()
+    }
+
+    // ---------- 键盘高度：同步调整键盘容器 ----------
+
+    override fun onKeyboardHeightChanged(heightPx: Int) {
+        if (!::kbd.isInitialized || !::keyboardFrame.isInitialized) return
+        val keyboardParams = kbd.layoutParams
+        keyboardParams.height = heightPx
+        kbd.layoutParams = keyboardParams
+        val frameParams = keyboardFrame.layoutParams as LinearLayout.LayoutParams
+        frameParams.height = heightPx
+        keyboardFrame.layoutParams = frameParams
     }
 
     // ---------- 键盘事件 ----------
