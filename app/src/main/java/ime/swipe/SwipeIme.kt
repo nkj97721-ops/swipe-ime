@@ -379,10 +379,10 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
             val cm = clipboardManager ?: return
             ic.performContextMenuAction(android.R.id.copy)
-            if (readClipboardItems(cm.primaryClip).none { it.text == selected }) {
+            if (!clipboardHasText(cm.primaryClip, selected)) {
                 cm.setPrimaryClip(ClipData.newPlainText("text", selected))
             }
-            if (readClipboardItems(cm.primaryClip).none { it.text == selected }) return
+            if (!clipboardHasText(cm.primaryClip, selected)) return
 
             // 仅在编辑器明确返回完整文档内容时才把光标收至文末，避免错误偏移。
             val before = ic.getTextBeforeCursor(1_000_000, 0)?.toString()
@@ -452,6 +452,17 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         }
     }
 
+    private fun clipboardHasText(clip: ClipData?, expected: String): Boolean {
+        if (clip == null) return false
+        for (i in 0 until clip.itemCount) {
+            val item = clip.getItemAt(i)
+            val text = item.text?.toString()
+                ?: item.htmlText?.let { Html.fromHtml(it, Html.FROM_HTML_MODE_LEGACY).toString() }
+            if (text == expected) return true
+        }
+        return false
+    }
+
     private fun readClipboardItems(clip: ClipData?): List<ClipEntry> {
         if (clip == null || clip.itemCount == 0) return emptyList()
         val result = ArrayList<ClipEntry>()
@@ -461,8 +472,10 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
             val text = item.text?.toString()
                 ?: html?.let { Html.fromHtml(it, Html.FROM_HTML_MODE_LEGACY).toString() }
             val uri = item.uri ?: item.intent?.data
-            val mime = uri?.let { contentResolver.getType(it) }
-                ?: clip.description.getMimeType(i.coerceAtMost(clip.description.mimeTypeCount - 1))
+            val descriptionMime = if (clip.description.mimeTypeCount > 0) {
+                clip.description.getMimeType(i.coerceAtMost(clip.description.mimeTypeCount - 1))
+            } else null
+            val mime = uri?.let { contentResolver.getType(it) } ?: descriptionMime
             val fileName = uri?.let { copyClipboardUriToFile(it, mime) }
             if (!text.isNullOrEmpty() || fileName != null) {
                 val digest = fileName?.let { digestForFile(File(filesDir, "clipboard/" + it)) }
@@ -471,7 +484,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
                         text = text,
                         html = html,
                         fileName = fileName,
-                        mimeType = if (fileName != null) mime else null,
+                        mimeType = if (fileName != null) (mime ?: "application/octet-stream") else null,
                         label = clip.description.label?.toString().orEmpty(),
                         digest = digest
                     )
