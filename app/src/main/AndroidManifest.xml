@@ -3,6 +3,11 @@
     <application
         android:label="滑行输入法 20261107-2240"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+        <provider
+            android:name="ime.swipe.ClipboardProvider"
+            android:authorities="${applicationId}.clipboard"
+            android:exported="false"
+            android:grantUriPermissions="true" />
         <service
             android:name="ime.swipe.SwipeIme"
             android:label="滑行输入法 20261107-2240"
