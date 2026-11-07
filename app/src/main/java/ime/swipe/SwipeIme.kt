@@ -367,9 +367,9 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
             if (selected.isEmpty()) return
 
             val cm = clipboardManager ?: return
-            val actionHandled = ic.performContextMenuAction(android.R.id.copy)
+            ic.performContextMenuAction(android.R.id.copy)
             val copied = readClipboardItems(cm.primaryClip).any { it == selected }
-            if (!actionHandled && !copied) return
+            if (!copied) return
 
             // 全选复制后收起选区，光标放在文本末尾。
             ic.setSelection(selected.length, selected.length)
