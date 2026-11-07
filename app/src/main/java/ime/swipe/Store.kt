@@ -3,6 +3,7 @@ package ime.swipe
 import android.content.Context
 import android.content.SharedPreferences
 import org.json.JSONArray
+import org.json.JSONObject
 
 class Store(ctx: Context) {
     private val sp: SharedPreferences = ctx.getSharedPreferences("ime", Context.MODE_PRIVATE)
@@ -27,6 +28,26 @@ class Store(ctx: Context) {
 
     fun putList(key: String, l: List<String>) {
         sp.edit().putString(key, JSONArray(l).toString()).apply()
+    }
+
+    fun getClipEntries(): MutableList<ClipEntry> {
+        val raw = sp.getString("clip_entries", null)
+        if (raw != null) {
+            return try {
+                val array = JSONArray(raw)
+                MutableList(array.length()) { ClipEntry.fromJson(array.getJSONObject(it)) }
+            } catch (_: Exception) {
+                mutableListOf()
+            }
+        }
+        // Migrate existing text-only clipboard history without losing old entries.
+        return getList("clips", emptyList()).map { ClipEntry(text = it) }.toMutableList()
+    }
+
+    fun putClipEntries(entries: List<ClipEntry>) {
+        val array = JSONArray()
+        entries.forEach { array.put(it.toJson()) }
+        sp.edit().putString("clip_entries", array.toString()).apply()
     }
 
     /** 键盘黑色背景不透明度 0 到 100 */
