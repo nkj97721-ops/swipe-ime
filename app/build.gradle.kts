@@ -8,11 +8,11 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "ime.swipe.k202611072240"
+        applicationId = "ime.swipe.k202611072250"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2026110727
-        versionName = "2026.11.07-2240"
+        versionCode = 2026110728
+        versionName = "2026.11.07-2250"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
