@@ -242,13 +242,6 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         }
     }
 
-    override fun onSpaceLongPress() {
-        settle()
-        hidePanel()
-        requestHideSelf(0)
-    }
-
-
 
     override fun onSpace() {
         val ic = currentInputConnection ?: return
