@@ -1,10 +1,12 @@
 package ime.swipe
 
+import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.text.Html
 import android.inputmethodservice.InputMethodService
 import android.os.SystemClock
 import android.view.Gravity
@@ -35,6 +37,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private var clips: MutableList<String> = mutableListOf()
     private var phrases: MutableList<String> = mutableListOf()
     private var panelKind = 0 // 0 无 1 剪贴板 2 常用语
+    private var clipboardManager: ClipboardManager? = null
 
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "bg_alpha") applyAlpha()
@@ -52,8 +55,16 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         phrases = store.getList("phrases", DEFAULT_PHRASES)
         window?.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         store.prefs().registerOnSharedPreferenceChangeListener(prefListener)
-        (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).addPrimaryClipChangedListener(clipListener)
+        clipboardManager = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboardManager?.addPrimaryClipChangedListener(clipListener)
         Thread { lex.load(applicationContext) }.start()
+    }
+
+    override fun onDestroy() {
+        clipboardManager?.removePrimaryClipChangedListener(clipListener)
+        clipboardManager = null
+        if (::store.isInitialized) store.prefs().unregisterOnSharedPreferenceChangeListener(prefListener)
+        super.onDestroy()
     }
 
     override fun onCreateInputView(): View {
@@ -317,13 +328,9 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
                 ic?.performContextMenuAction(android.R.id.selectAll)
                 sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
             }
-            "select_copy" -> {
-                ic?.performContextMenuAction(android.R.id.selectAll)
-                ic?.performContextMenuAction(android.R.id.copy)
-            }
+            "select_copy" -> copyAllText(ic)
             "paste_enter" -> {
-                ic?.performContextMenuAction(android.R.id.paste)
-                doEnter()
+                if (pasteClipboardText(ic)) doEnter()
             }
             "undo" -> ctrlKey(KeyEvent.KEYCODE_Z)
             "left" -> sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_LEFT)
@@ -350,23 +357,75 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         ic.sendKeyEvent(KeyEvent(t, t, KeyEvent.ACTION_UP, code, 0, meta))
     }
 
-    // ---------- 剪贴板与常用语 ----------
+    // ---------- 可靠复制、粘贴与剪贴板历史 ----------
 
-    private fun grabClip() {
+    private fun copyAllText(ic: android.view.inputmethod.InputConnection?) {
+        if (ic == null) return
         try {
-            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            val clip = cm.primaryClip ?: return
-            if (clip.itemCount == 0) return
-            val t = clip.getItemAt(0).coerceToText(this).toString().trim()
-            if (t.isEmpty() || t.length > 2000) return
-            clips.remove(t)
-            clips.add(0, t)
-            while (clips.size > 30) clips.removeAt(clips.size - 1)
-            store.putList("clips", clips)
-        } catch (e: Exception) {
+            if (!ic.performContextMenuAction(android.R.id.selectAll)) return
+            val selected = ic.getSelectedText(0)?.toString() ?: return
+            if (selected.isEmpty()) return
+
+            val cm = clipboardManager ?: return
+            val actionHandled = ic.performContextMenuAction(android.R.id.copy)
+            val copied = readClipboardItems(cm.primaryClip).any { it == selected }
+            if (!actionHandled && !copied) return
+
+            // 全选复制后收起选区，光标放在文本末尾。
+            ic.setSelection(selected.length, selected.length)
+            grabClip()
+        } catch (_: Exception) {
+            // 不支持上下文菜单的编辑器不伪报复制成功。
         }
     }
 
+    private fun pasteClipboardText(ic: android.view.inputmethod.InputConnection?): Boolean {
+        if (ic == null) return false
+        return try {
+            if (ic.performContextMenuAction(android.R.id.paste)) {
+                true
+            } else {
+                // 对不实现系统粘贴菜单的输入框，退回纯文本提交。
+                val text = readClipboardItems(clipboardManager?.primaryClip).firstOrNull()
+                    ?: return false
+                ic.commitText(text, 1)
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun readClipboardItems(clip: ClipData?): List<String> {
+        if (clip == null || clip.itemCount == 0) return emptyList()
+        val result = LinkedHashSet<String>()
+        for (i in 0 until clip.itemCount) {
+            val item = clip.getItemAt(i)
+            val text = when {
+                item.text != null -> item.text.toString()
+                !item.htmlText.isNullOrEmpty() -> Html.fromHtml(
+                    item.htmlText!!, Html.FROM_HTML_MODE_LEGACY
+                ).toString()
+                else -> null
+            }
+            if (!text.isNullOrEmpty()) result.add(text)
+        }
+        return result.toList()
+    }
+
+    private fun grabClip() {
+        try {
+            val items = readClipboardItems(clipboardManager?.primaryClip)
+            if (items.isEmpty()) return
+            for (text in items.asReversed()) {
+                clips.remove(text)
+                clips.add(0, text)
+            }
+            while (clips.size > 30) clips.removeAt(clips.size - 1)
+            store.putList("clips", clips)
+        } catch (_: Exception) {
+            // 读取失败时保留已有历史。
+        }
+    }
     private fun togglePanel(kind: Int) {
         if (panelKind == kind) {
             hidePanel()
