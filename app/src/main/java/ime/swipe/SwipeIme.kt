@@ -362,16 +362,26 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private fun copyAllText(ic: android.view.inputmethod.InputConnection?) {
         if (ic == null) return
         try {
-            if (!ic.performContextMenuAction(android.R.id.selectAll)) return
-            val selected = ic.getSelectedText(0)?.toString()
-                ?: ic.getTextAfterCursor(1_000_000, 0)?.toString()
-                ?: return
+            val selectedAll = ic.performContextMenuAction(android.R.id.selectAll)
+            val selected = if (selectedAll) {
+                ic.getSelectedText(0)?.toString()
+                    ?: ic.getTextAfterCursor(1_000_000, 0)?.toString()
+            } else {
+                // 个别编辑器不支持系统“全选”菜单，改为读取光标两侧和当前选区。
+                val before = ic.getTextBeforeCursor(1_000_000, 0)?.toString() ?: return
+                val current = ic.getSelectedText(0)?.toString().orEmpty()
+                val after = ic.getTextAfterCursor(1_000_000, 0)?.toString() ?: return
+                before + current + after
+            } ?: return
             if (selected.isEmpty()) return
 
             val cm = clipboardManager ?: return
             ic.performContextMenuAction(android.R.id.copy)
-            val copied = readClipboardItems(cm.primaryClip).any { it == selected }
-            if (!copied) return
+            if (readClipboardItems(cm.primaryClip).none { it == selected }) {
+                // 系统复制菜单不可用时，直接写入已读取的完整纯文本。
+                cm.setPrimaryClip(ClipData.newPlainText("text", selected))
+            }
+            if (readClipboardItems(cm.primaryClip).none { it == selected }) return
 
             // 全选复制后收起选区，光标放在文本末尾。
             ic.setSelection(selected.length, selected.length)
