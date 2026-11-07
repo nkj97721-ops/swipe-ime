@@ -49,6 +49,7 @@ class KeyboardView(
         fun onText(s: String)
         fun onGlide(xs: FloatArray, ys: FloatArray, n: Int)
         fun onTool(name: String)
+        fun onKeyboardHeightChanged(heightPx: Int)
     }
 
     private val dp = resources.displayMetrics.density
@@ -61,6 +62,7 @@ class KeyboardView(
     private var panel = Panel.LETTERS
     private var numLeftW = 0f
     private var rowH = 0f
+    private var bottomRowHeight = 57f * dp
     private var gthr = 30f
     private var bgA = store.bgAlpha * 255 / 100
     private var uppercase = false
@@ -97,6 +99,9 @@ class KeyboardView(
     private var backspaceLongPressed = false
     private var cursorJumpLongPressed = false
     private var spaceLongPressed = false
+    private var spaceDragging = false
+    private var spaceDownRawY = 0f
+    private var spaceDownBottomHeight = 57f * dp
     private val cursorJumpHandler = Handler(Looper.getMainLooper())
     private val spaceLongPressHandler = Handler(Looper.getMainLooper())
     private val spaceLongPress = object : Runnable {
@@ -139,7 +144,8 @@ class KeyboardView(
 
     private fun buildKeys(w: Float, h: Float) {
         if (w <= 0f || h <= 0f) return
-        val rh = h / 6f
+        val rh = 57f * dp
+        val bottomH = bottomRowHeight
         val kwF = w / 10f
         rowH = rh
         big.textSize = 0.058f * w
@@ -234,7 +240,7 @@ class KeyboardView(
         val t2 = arrayOf("全选并复制", "粘贴并回车")
         val c2 = arrayOf("select_copy", "paste_enter")
         val w2 = w / 2f
-        for (i in 0..1) toolKeys.add(Key(t2[i], Kind.TOOL, c2[i], i * w2, 5 * rh, (i + 1) * w2, 6 * rh))
+        for (i in 0..1) toolKeys.add(Key(t2[i], Kind.TOOL, c2[i], i * w2, 5 * rh, (i + 1) * w2, 5 * rh + bottomH))
         invalidate()
     }
 
@@ -362,6 +368,9 @@ class KeyboardView(
                     cursorJumpHandler.postDelayed(cursorJumpLongPress, 450L)
                 }
                 if (k != null && k.kind == Kind.SPACE) {
+                    spaceDownRawY = e.rawY
+                    spaceDownBottomHeight = bottomRowHeight
+                    spaceDragging = false
                     spaceLongPressHandler.postDelayed(spaceLongPress, 450L)
                 }
                 if (k != null && k.kind == Kind.BACK) {
@@ -388,6 +397,20 @@ class KeyboardView(
                         while (fed < n) {
                             trail.move(px[fed], py[fed], pt[fed])
                             fed++
+                        }
+                    }
+                } else if (k.kind == Kind.SPACE) {
+                    val dragDistance = spaceDownRawY - e.rawY
+                    if (!spaceDragging && kotlin.math.abs(dragDistance) > 3f * dp) {
+                        spaceDragging = true
+                        spaceLongPressHandler.removeCallbacks(spaceLongPress)
+                    }
+                    if (spaceDragging) {
+                        val nextHeight = (spaceDownBottomHeight + dragDistance).coerceIn(24f * dp, 160f * dp)
+                        if (kotlin.math.abs(nextHeight - bottomRowHeight) >= 1f) {
+                            bottomRowHeight = nextHeight
+                            host.onKeyboardHeightChanged((5f * rowH + bottomRowHeight).toInt())
+                            requestLayout()
                         }
                     }
                 } else if (k.kind == Kind.COMMA) {
@@ -422,7 +445,7 @@ class KeyboardView(
                     else if (!backspaceLongPressed) host.onBackspace()
                 } else if (k != null) {
                     val upKey = findKey(e.x, e.y)
-                    if (!cursorJumpLongPressed && !(k.kind == Kind.SPACE && spaceLongPressed) && (upKey === k || hypot(e.x - dx, e.y - dy) < gthr || k.kind == Kind.COMMA)) fire(k)
+                    if (!cursorJumpLongPressed && !(k.kind == Kind.SPACE && (spaceLongPressed || spaceDragging)) && (upKey === k || hypot(e.x - dx, e.y - dy) < gthr || k.kind == Kind.COMMA)) fire(k)
                 }
                 invalidate()
             }
@@ -432,6 +455,7 @@ class KeyboardView(
                 spaceLongPressHandler.removeCallbacks(spaceLongPress)
                 backspaceLongPressed = false
                 spaceLongPressed = false
+                spaceDragging = false
                 cursorJumpLongPressed = false
                 if (glide) trail.up(e.eventTime)
                 glide = false
