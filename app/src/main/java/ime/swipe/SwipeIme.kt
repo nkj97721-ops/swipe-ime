@@ -568,7 +568,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         if (kind == 1) grabClip()
         settle()
         panelKind = kind
-        panel.show(kind, if (kind == 1) clips else phrases)
+        if (kind == 1) panel.showClipboard(clips) else panel.show(kind, phrases)
         panel.visibility = View.VISIBLE
         kbd.activeTool = if (kind == 1) "clip" else "phrase"
     }
@@ -585,18 +585,25 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         hidePanel()
     }
 
+    override fun onPanelPickClip(entry: ClipEntry) {
+        settle()
+        if (pasteClipEntry(currentInputConnection, entry)) hidePanel()
+    }
+
     override fun onPanelBack() {
         hidePanel()
     }
 
     override fun onPanelDelete(index: Int) {
-        val items = if (panelKind == 1) clips else phrases
-        if (index !in items.indices) return
-        items.removeAt(index)
         if (panelKind == 1) {
-            store.putList("clips", clips)
-            panel.show(1, clips)
+            if (index !in clips.indices) return
+            val removed = clips.removeAt(index)
+            removed.fileName?.let { File(filesDir, "clipboard/" + it).delete() }
+            store.putClipEntries(clips)
+            panel.showClipboard(clips)
         } else {
+            if (index !in phrases.indices) return
+            phrases.removeAt(index)
             store.putList("phrases", phrases)
             panel.show(2, phrases)
         }
@@ -605,8 +612,9 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     override fun onPanelAction(kind: Int) {
         if (kind == 1) {
             clips.clear()
-            store.putList("clips", clips)
-            panel.show(1, clips)
+            store.putClipEntries(clips)
+            cleanupClipboardFiles()
+            panel.showClipboard(clips)
         } else {
             settle()
             val ic = currentInputConnection ?: return
