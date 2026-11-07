@@ -440,10 +440,14 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
             if (!entry.html.isNullOrEmpty()) {
                 val cm = clipboardManager ?: return false
                 cm.setPrimaryClip(ClipData.newHtmlText(entry.label.ifBlank { "text" }, text, entry.html))
-                val before = ic.getTextBeforeCursor(1_000_000, 0)?.toString()
+                val beforeLeft = ic.getTextBeforeCursor(1_000_000, 0)?.toString()
+                val beforeRight = ic.getTextAfterCursor(1_000_000, 0)?.toString()
                 val handled = ic.performContextMenuAction(android.R.id.paste)
-                val after = ic.getTextBeforeCursor(1_000_000, 0)?.toString()
-                if (handled && before != null && after != null && before != after) return true
+                val afterLeft = ic.getTextBeforeCursor(1_000_000, 0)?.toString()
+                val afterRight = ic.getTextAfterCursor(1_000_000, 0)?.toString()
+                val changed = (beforeLeft != null && afterLeft != null && beforeLeft != afterLeft) ||
+                    (beforeRight != null && afterRight != null && beforeRight != afterRight)
+                if (handled && changed) return true
             }
             // 纯文本直接提交，保留空格、换行和完整内容。
             ic.commitText(text, 1)
