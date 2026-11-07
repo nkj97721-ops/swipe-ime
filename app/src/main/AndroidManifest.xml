@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
-        android:label="滑行输入法 20261104-0333"
+        android:label="滑行输入法 20261107-2210"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
         <service
             android:name="ime.swipe.SwipeIme"
-            android:label="滑行输入法 20261104-0333"
+            android:label="滑行输入法 20261107-2210"
             android:exported="true"
             android:permission="android.permission.BIND_INPUT_METHOD">
             <intent-filter>
