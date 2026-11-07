@@ -369,85 +369,197 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
     // ---------- 可靠复制、粘贴与剪贴板历史 ----------
 
-    private fun copyAllText(ic: android.view.inputmethod.InputConnection?) {
+    private fun copyAllText(ic: InputConnection?) {
         if (ic == null) return
         try {
-            val selectedAll = ic.performContextMenuAction(android.R.id.selectAll)
-            val selected = if (selectedAll) {
-                ic.getSelectedText(0)?.toString()
-                    ?: ic.getTextAfterCursor(1_000_000, 0)?.toString()
-            } else {
-                // 个别编辑器不支持系统“全选”菜单，改为读取光标两侧和当前选区。
-                val before = ic.getTextBeforeCursor(1_000_000, 0)?.toString() ?: return
-                val current = ic.getSelectedText(0)?.toString().orEmpty()
-                val after = ic.getTextAfterCursor(1_000_000, 0)?.toString() ?: return
-                before + current + after
-            } ?: return
+            // 只在编辑器确认执行全选后读取选区，不能把光标附近的截断文本冒充全文。
+            if (!ic.performContextMenuAction(android.R.id.selectAll)) return
+            val selected = ic.getSelectedText(0)?.toString() ?: return
             if (selected.isEmpty()) return
 
             val cm = clipboardManager ?: return
             ic.performContextMenuAction(android.R.id.copy)
-            if (readClipboardItems(cm.primaryClip).none { it == selected }) {
-                // 系统复制菜单不可用时，直接写入已读取的完整纯文本。
+            if (readClipboardItems(cm.primaryClip).none { it.text == selected }) {
                 cm.setPrimaryClip(ClipData.newPlainText("text", selected))
             }
-            if (readClipboardItems(cm.primaryClip).none { it == selected }) return
+            if (readClipboardItems(cm.primaryClip).none { it.text == selected }) return
 
-            // 全选复制后收起选区，光标放在文本末尾。
-            ic.setSelection(selected.length, selected.length)
+            // 仅在编辑器明确返回完整文档内容时才把光标收至文末，避免错误偏移。
+            val before = ic.getTextBeforeCursor(1_000_000, 0)?.toString()
+            if (before == selected) ic.setSelection(selected.length, selected.length)
             grabClip()
         } catch (_: Exception) {
-            // 不支持上下文菜单的编辑器不伪报复制成功。
+            // 当前编辑器不支持全选/复制时不伪造成功。
         }
     }
 
-    private fun pasteClipboardText(ic: android.view.inputmethod.InputConnection?): Boolean {
+    private fun pasteClipboardText(ic: InputConnection?): Boolean {
         if (ic == null) return false
         return try {
-            if (ic.performContextMenuAction(android.R.id.paste)) {
-                true
-            } else {
-                // 对不实现系统粘贴菜单的输入框，退回纯文本提交。
-                val text = readClipboardItems(clipboardManager?.primaryClip).firstOrNull()
-                    ?: return false
-                ic.commitText(text, 1)
-            }
+            grabClip()
+            val entry = clips.firstOrNull() ?: return false
+            pasteClipEntry(ic, entry)
         } catch (_: Exception) {
             false
         }
     }
 
-    private fun readClipboardItems(clip: ClipData?): List<String> {
+    private fun pasteClipEntry(ic: InputConnection?, entry: ClipEntry): Boolean {
+        if (ic == null) return false
+        return try {
+            if (entry.fileName != null && !entry.mimeType.isNullOrBlank()) {
+                val uri = Uri.Builder()
+                    .scheme("content")
+                    .authority(packageName + ".clipboard")
+                    .appendPath(entry.fileName)
+                    .appendQueryParameter("mime", entry.mimeType)
+                    .appendQueryParameter("name", entry.label.ifBlank { entry.fileName })
+                    .build()
+                val mime = entry.mimeType
+                val accepted = currentInputEditorInfo?.contentMimeTypes?.any { supported ->
+                    supported == mime || supported == "*/*" ||
+                        (supported.endsWith("/*") && mime.startsWith(supported.substringBefore('/')))
+                } == true
+                if (Build.VERSION.SDK_INT >= 25 && accepted) {
+                    val description = ClipDescription(
+                        entry.label.ifBlank { "attachment" }, arrayOf(mime)
+                    )
+                    val content = InputContentInfo(uri, description, null)
+                    if (ic.commitContent(content, InputConnection.INPUT_CONTENT_GRANT_READ_URI_PERMISSION, null)) {
+                        return true
+                    }
+                }
+
+                // 不支持 IME content 的编辑器由系统粘贴菜单处理 URI。
+                val cm = clipboardManager ?: return false
+                cm.setPrimaryClip(ClipData.newUri(contentResolver, entry.label.ifBlank { "attachment" }, uri))
+                return ic.performContextMenuAction(android.R.id.paste)
+            }
+
+            val text = entry.text ?: return false
+            if (!entry.html.isNullOrEmpty()) {
+                val cm = clipboardManager ?: return false
+                cm.setPrimaryClip(ClipData.newHtmlText(entry.label.ifBlank { "text" }, text, entry.html))
+                val before = ic.getTextBeforeCursor(1_000_000, 0)?.toString()
+                val handled = ic.performContextMenuAction(android.R.id.paste)
+                val after = ic.getTextBeforeCursor(1_000_000, 0)?.toString()
+                if (handled && before != null && after != null && before != after) return true
+            }
+            // 纯文本直接提交，保留空格、换行和完整内容。
+            ic.commitText(text, 1)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun readClipboardItems(clip: ClipData?): List<ClipEntry> {
         if (clip == null || clip.itemCount == 0) return emptyList()
-        val result = LinkedHashSet<String>()
+        val result = ArrayList<ClipEntry>()
         for (i in 0 until clip.itemCount) {
             val item = clip.getItemAt(i)
-            val text = when {
-                item.text != null -> item.text.toString()
-                !item.htmlText.isNullOrEmpty() -> Html.fromHtml(
-                    item.htmlText!!, Html.FROM_HTML_MODE_LEGACY
-                ).toString()
-                else -> null
+            val html = item.htmlText
+            val text = item.text?.toString()
+                ?: html?.let { Html.fromHtml(it, Html.FROM_HTML_MODE_LEGACY).toString() }
+            val uri = item.uri ?: item.intent?.data
+            val mime = uri?.let { contentResolver.getType(it) }
+                ?: clip.description.getMimeType(i.coerceAtMost(clip.description.mimeTypeCount - 1))
+            val fileName = uri?.let { copyClipboardUriToFile(it, mime) }
+            if (!text.isNullOrEmpty() || fileName != null) {
+                val digest = fileName?.let { digestForFile(File(filesDir, "clipboard/" + it)) }
+                result.add(
+                    ClipEntry(
+                        text = text,
+                        html = html,
+                        fileName = fileName,
+                        mimeType = if (fileName != null) mime else null,
+                        label = clip.description.label?.toString().orEmpty(),
+                        digest = digest
+                    )
+                )
             }
-            if (!text.isNullOrEmpty()) result.add(text)
         }
-        return result.toList()
+        return result
+    }
+
+    private fun copyClipboardUriToFile(uri: Uri, mime: String?): String? {
+        val dir = File(filesDir, "clipboard")
+        if (!dir.exists() && !dir.mkdirs()) return null
+        val name = UUID.randomUUID().toString()
+        val temp = File(dir, name + ".tmp")
+        val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime)
+        val finalName = if (ext.isNullOrBlank()) name else name + "." + ext
+        val target = File(dir, finalName)
+        return try {
+            val input = contentResolver.openInputStream(uri) ?: return null
+            input.use { source ->
+                FileOutputStream(temp).use { output ->
+                    val buffer = ByteArray(8192)
+                    var total = 0L
+                    while (true) {
+                        val count = source.read(buffer)
+                        if (count < 0) break
+                        total += count
+                        if (total > 20L * 1024L * 1024L) {
+                            temp.delete()
+                            return null
+                        }
+                        output.write(buffer, 0, count)
+                    }
+                }
+            }
+            if (!temp.renameTo(target)) {
+                temp.delete()
+                return null
+            }
+            finalName
+        } catch (_: Exception) {
+            temp.delete()
+            target.delete()
+            null
+        }
+    }
+
+    private fun digestForFile(file: File): String? = try {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(8192)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        digest.digest().joinToString("") { "%02x".format(it) }
+    } catch (_: Exception) {
+        null
     }
 
     private fun grabClip() {
         try {
             val items = readClipboardItems(clipboardManager?.primaryClip)
             if (items.isEmpty()) return
-            for (text in items.asReversed()) {
-                clips.remove(text)
-                clips.add(0, text)
+            for (entry in items.asReversed()) {
+                clips.removeAll { it.sameContent(entry) }
+                clips.add(0, entry)
             }
-            while (clips.size > 30) clips.removeAt(clips.size - 1)
-            store.putList("clips", clips)
+            while (clips.size > 30) clips.removeAt(clips.lastIndex)
+            store.putClipEntries(clips)
+            cleanupClipboardFiles()
+            if (panelKind == 1 && ::panel.isInitialized && panel.visibility == View.VISIBLE) {
+                panel.showClipboard(clips)
+            }
         } catch (_: Exception) {
-            // 读取失败时保留已有历史。
+            // 剪贴板访问权限变化时保留已有历史。
         }
     }
+
+    private fun cleanupClipboardFiles() {
+        val keep = clips.mapNotNull { it.fileName }.toSet()
+        File(filesDir, "clipboard").listFiles()?.forEach { file ->
+            if (file.name !in keep) file.delete()
+        }
+    }
+
     private fun togglePanel(kind: Int) {
         if (panelKind == kind) {
             hidePanel()
