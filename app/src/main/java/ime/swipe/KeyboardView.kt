@@ -391,7 +391,7 @@ class KeyboardView(
                         spaceDragging = true
                     }
                     if (spaceDragging) {
-                        val nextHeight = (spaceDownBottomHeight + dragDistance).coerceIn(24f * dp, 160f * dp)
+                        val nextHeight = (spaceDownBottomHeight + dragDistance).coerceIn(24f * dp, 296f * dp)
                         if (kotlin.math.abs(nextHeight - bottomRowHeight) >= 1f) {
                             bottomRowHeight = nextHeight
                             host.onKeyboardHeightChanged((5f * rowH + bottomRowHeight).toInt())
