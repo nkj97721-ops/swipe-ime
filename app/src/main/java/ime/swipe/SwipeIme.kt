@@ -1,23 +1,33 @@
 package ime.swipe
 
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.net.Uri
 import android.text.Html
 import android.inputmethodservice.InputMethodService
+import android.os.Build
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+import android.view.inputmethod.InputContentInfo
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.webkit.MimeTypeMap
+import java.io.File
+import java.io.FileOutputStream
+import java.security.MessageDigest
+import java.util.UUID
 
 class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private val lex = Lexicon()
@@ -34,7 +44,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private var cands: List<Cand> = emptyList()
     private var glideWords: List<String> = emptyList()
 
-    private var clips: MutableList<String> = mutableListOf()
+    private var clips: MutableList<ClipEntry> = mutableListOf()
     private var phrases: MutableList<String> = mutableListOf()
     private var panelKind = 0 // 0 无 1 剪贴板 2 常用语
     private var clipboardManager: ClipboardManager? = null
@@ -51,7 +61,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     override fun onCreate() {
         super.onCreate()
         store = Store(this)
-        clips = store.getList("clips", emptyList())
+        clips = store.getClipEntries()
         phrases = store.getList("phrases", DEFAULT_PHRASES)
         window?.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         store.prefs().registerOnSharedPreferenceChangeListener(prefListener)
