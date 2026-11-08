@@ -17,6 +17,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.ExtractedTextRequest
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputContentInfo
 import android.widget.FrameLayout
@@ -372,14 +373,19 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private fun copyAllText(ic: InputConnection?) {
         if (ic == null) return
         try {
-            // 不依赖 performContextMenuAction 的返回值：部分编辑器会完成全选，
-            // 却错误返回 false。再检查选区两侧是否都已到文档边界，防止复制局部选区。
+            // 不依赖 performContextMenuAction 的返回值；用 ExtractedText 的选区边界
+            // 验证确实选中了整个文档，避免把用户原有的局部选区误当成全文。
             ic.performContextMenuAction(android.R.id.selectAll)
-            val left = ic.getTextBeforeCursor(1, 0)?.toString() ?: return
-            val right = ic.getTextAfterCursor(1, 0)?.toString() ?: return
-            if (left.isNotEmpty() || right.isNotEmpty()) return
+            val extracted = ic.getExtractedText(ExtractedTextRequest().apply {
+                hintMaxChars = 1_000_000
+                hintMaxLines = 10_000
+            }, 0) ?: return
+            val fullText = extracted.text?.toString() ?: return
+            val selectionStart = minOf(extracted.selectionStart, extracted.selectionEnd)
+            val selectionEnd = maxOf(extracted.selectionStart, extracted.selectionEnd)
+            if (selectionStart != 0 || selectionEnd != fullText.length) return
             val selected = ic.getSelectedText(0)?.toString() ?: return
-            if (selected.isEmpty()) return
+            if (selected.isEmpty() || selected != fullText) return
 
             val cm = clipboardManager ?: return
             ic.performContextMenuAction(android.R.id.copy)
