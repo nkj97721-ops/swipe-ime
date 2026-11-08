@@ -630,7 +630,8 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     }
 
     private fun cleanupClipboardFiles() {
-        val keep = clips.mapNotNull { it.fileName }.toSet() + pendingClipFiles.toSet()
+        val pending = synchronized(pendingClipFiles) { pendingClipFiles.toSet() }
+        val keep = clips.mapNotNull { it.fileName }.toSet() + pending
         File(filesDir, "clipboard").listFiles()?.forEach { file ->
             if (file.name !in keep) file.delete()
         }
