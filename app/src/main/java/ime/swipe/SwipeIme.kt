@@ -11,6 +11,8 @@ import android.net.Uri
 import android.text.Html
 import android.inputmethodservice.InputMethodService
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.KeyEvent
@@ -29,6 +31,8 @@ import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.UUID
+import java.util.Collections
+import java.util.concurrent.Executors
 
 class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private val lex = Lexicon()
@@ -49,6 +53,10 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private var phrases: MutableList<String> = mutableListOf()
     private var panelKind = 0 // 0 无 1 剪贴板 2 常用语
     private var clipboardManager: ClipboardManager? = null
+    private val clipboardExecutor = Executors.newSingleThreadExecutor()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val pendingClipFiles = Collections.synchronizedSet(mutableSetOf<String>())
+    @Volatile private var serviceDestroyed = false
 
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "bg_alpha") applyAlpha()
@@ -74,6 +82,9 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     override fun onDestroy() {
         clipboardManager?.removePrimaryClipChangedListener(clipListener)
         clipboardManager = null
+        serviceDestroyed = true
+        clipboardExecutor.shutdownNow()
+        mainHandler.removeCallbacksAndMessages(null)
         if (::store.isInitialized) store.prefs().unregisterOnSharedPreferenceChangeListener(prefListener)
         super.onDestroy()
     }
@@ -340,8 +351,8 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
                 sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
             }
             "select_copy" -> copyAllText(ic)
-            "paste_enter" -> {
-                if (pasteClipboardText(ic)) doEnter()
+            "paste_enter" -> pasteClipboardText(ic) { pasted ->
+                if (pasted && ic === currentInputConnection) doEnter()
             }
             "undo" -> ctrlKey(KeyEvent.KEYCODE_Z)
             "left" -> sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_LEFT)
@@ -403,16 +414,29 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         }
     }
 
-    private fun pasteClipboardText(ic: InputConnection?): Boolean {
-        if (ic == null) return false
-        return try {
-            // Paste must use the current system clipboard, never a stale history item.
-            val currentItems = readClipboardItems(clipboardManager?.primaryClip)
-            if (currentItems.isEmpty()) return false
-            rememberClipItems(currentItems)
-            pasteClipEntry(ic, currentItems.first())
+    private fun pasteClipboardText(ic: InputConnection?, onComplete: (Boolean) -> Unit) {
+        if (ic == null) {
+            onComplete(false)
+            return
+        }
+        val clip = try { clipboardManager?.primaryClip } catch (_: Exception) { null }
+        if (clip == null || clip.itemCount == 0) {
+            onComplete(false)
+            return
+        }
+        try {
+            clipboardExecutor.execute {
+                val items = try { readClipboardItems(clip) } catch (_: Exception) { emptyList() }
+                mainHandler.post {
+                    if (serviceDestroyed) return@post
+                    rememberClipItems(items)
+                    val pasted = ic === currentInputConnection &&
+                        items.firstOrNull()?.let { pasteClipEntry(ic, it) } == true
+                    onComplete(pasted)
+                }
+            }
         } catch (_: Exception) {
-            false
+            onComplete(false)
         }
     }
 
@@ -545,6 +569,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
                 temp.delete()
                 return null
             }
+            pendingClipFiles.add(finalName)
             finalName
         } catch (_: Exception) {
             temp.delete()
@@ -583,15 +608,22 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     }
 
     private fun grabClip() {
+        val clip = try { clipboardManager?.primaryClip } catch (_: Exception) { null } ?: return
+        if (clip.itemCount == 0) return
         try {
-            rememberClipItems(readClipboardItems(clipboardManager?.primaryClip))
+            clipboardExecutor.execute {
+                val items = try { readClipboardItems(clip) } catch (_: Exception) { emptyList() }
+                mainHandler.post {
+                    if (!serviceDestroyed) rememberClipItems(items)
+                }
+            }
         } catch (_: Exception) {
-            // 剪贴板访问权限变化时保留已有历史。
+            // 输入法销毁或线程池关闭时保留已有历史。
         }
     }
 
     private fun cleanupClipboardFiles() {
-        val keep = clips.mapNotNull { it.fileName }.toSet()
+        val keep = clips.mapNotNull { it.fileName }.toSet() + pendingClipFiles.toSet()
         File(filesDir, "clipboard").listFiles()?.forEach { file ->
             if (file.name !in keep) file.delete()
         }
