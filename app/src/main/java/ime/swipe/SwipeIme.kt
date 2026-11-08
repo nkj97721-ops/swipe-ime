@@ -71,6 +71,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         super.onCreate()
         store = Store(this)
         clips = store.getClipEntries()
+        cleanupClipboardFiles()
         phrases = store.getList("phrases", DEFAULT_PHRASES)
         window?.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         store.prefs().registerOnSharedPreferenceChangeListener(prefListener)
