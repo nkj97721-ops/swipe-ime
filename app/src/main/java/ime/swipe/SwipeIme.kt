@@ -506,35 +506,40 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         if (clip == null || clip.itemCount == 0) return emptyList()
         val result = ArrayList<ClipEntry>()
         for (i in 0 until clip.itemCount) {
-            val item = clip.getItemAt(i)
-            val html = item.htmlText
-            val uri = item.uri ?: item.intent?.data
-            // ClipDescription lists MIME types supported by the whole clip, not one
-            // MIME type per item. Prefer the URI's own resolver type; otherwise use
-            // the first advertised type instead of indexing by item position.
-            val descriptionMime = (0 until clip.description.mimeTypeCount)
-                .asSequence()
-                .map { clip.description.getMimeType(it) }
-                .firstOrNull()
-            val mime = uri?.let { contentResolver.getType(it) } ?: descriptionMime
-            val text = item.text?.toString()
-                ?: html?.let { Html.fromHtml(it, Html.FROM_HTML_MODE_LEGACY).toString() }
-                ?: if (mime?.startsWith("text/") == true && uri != null) {
-                    item.coerceToText(this)?.toString()
-                } else null
-            val fileName = uri?.let { copyClipboardUriToFile(it, mime) }
-            if (!text.isNullOrEmpty() || fileName != null) {
-                val digest = fileName?.let { digestForFile(File(filesDir, "clipboard/" + it)) }
-                result.add(
-                    ClipEntry(
-                        text = text,
-                        html = html,
-                        fileName = fileName,
-                        mimeType = if (fileName != null) (mime ?: "application/octet-stream") else null,
-                        label = clip.description.label?.toString().orEmpty(),
-                        digest = digest
+            try {
+                val item = clip.getItemAt(i)
+                val html = item.htmlText
+                val uri = item.uri ?: item.intent?.data
+                // ClipDescription lists MIME types supported by the whole clip, not one
+                // MIME type per item. Prefer the URI's own resolver type; otherwise use
+                // the first advertised type instead of indexing by item position.
+                val descriptionMime = (0 until clip.description.mimeTypeCount)
+                    .asSequence()
+                    .map { clip.description.getMimeType(it) }
+                    .firstOrNull()
+                val mime = uri?.let { contentResolver.getType(it) } ?: descriptionMime
+                val text = item.text?.toString()
+                    ?: html?.let { Html.fromHtml(it, Html.FROM_HTML_MODE_LEGACY).toString() }
+                    ?: if (mime?.startsWith("text/") == true && uri != null) {
+                        item.coerceToText(this)?.toString()
+                    } else null
+                val fileName = uri?.let { copyClipboardUriToFile(it, mime) }
+                if (!text.isNullOrEmpty() || fileName != null) {
+                    val digest = fileName?.let { digestForFile(File(filesDir, "clipboard/" + it)) }
+                    result.add(
+                        ClipEntry(
+                            text = text,
+                            html = html,
+                            fileName = fileName,
+                            mimeType = if (fileName != null) (mime ?: "application/octet-stream") else null,
+                            label = clip.description.label?.toString().orEmpty(),
+                            digest = digest
+                        )
                     )
-                )
+                }
+            } catch (_: Exception) {
+                // 一个损坏或权限失效的项目不能让同一剪贴板里的其他项目丢失。
+                continue
             }
         }
         return result
