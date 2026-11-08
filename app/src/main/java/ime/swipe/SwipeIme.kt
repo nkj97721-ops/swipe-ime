@@ -596,6 +596,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private fun rememberClipItems(items: List<ClipEntry>) {
         if (items.isEmpty()) return
         for (entry in items.asReversed()) {
+            entry.fileName?.let { pendingClipFiles.remove(it) }
             clips.removeAll { it.sameContent(entry) }
             clips.add(0, entry)
         }
