@@ -372,8 +372,12 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private fun copyAllText(ic: InputConnection?) {
         if (ic == null) return
         try {
-            // 只在编辑器确认执行全选后读取选区，不能把光标附近的截断文本冒充全文。
-            if (!ic.performContextMenuAction(android.R.id.selectAll)) return
+            // 不依赖 performContextMenuAction 的返回值：部分编辑器会完成全选，
+            // 却错误返回 false。再检查选区两侧是否都已到文档边界，防止复制局部选区。
+            ic.performContextMenuAction(android.R.id.selectAll)
+            val left = ic.getTextBeforeCursor(1, 0)?.toString() ?: return
+            val right = ic.getTextAfterCursor(1, 0)?.toString() ?: return
+            if (left.isNotEmpty() || right.isNotEmpty()) return
             val selected = ic.getSelectedText(0)?.toString() ?: return
             if (selected.isEmpty()) return
 
