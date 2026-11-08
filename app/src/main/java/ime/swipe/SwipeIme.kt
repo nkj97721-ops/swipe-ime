@@ -396,9 +396,11 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private fun pasteClipboardText(ic: InputConnection?): Boolean {
         if (ic == null) return false
         return try {
-            grabClip()
-            val entry = clips.firstOrNull() ?: return false
-            pasteClipEntry(ic, entry)
+            // Paste must use the current system clipboard, never a stale history item.
+            val currentItems = readClipboardItems(clipboardManager?.primaryClip)
+            if (currentItems.isEmpty()) return false
+            rememberClipItems(currentItems)
+            pasteClipEntry(ic, currentItems.first())
         } catch (_: Exception) {
             false
         }
@@ -417,8 +419,10 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
                     .build()
                 val mime = entry.mimeType
                 val accepted = currentInputEditorInfo?.contentMimeTypes?.any { supported ->
-                    supported == mime || supported == "*/*" ||
-                        (supported.endsWith("/*") && mime.startsWith(supported.substringBefore('/')))
+                    supported.equals(mime, ignoreCase = true) ||
+                        supported == "*/*" ||
+                        (supported.endsWith("/*") &&
+                            mime.startsWith(supported.substringBefore('/') + "/", ignoreCase = true))
                 } == true
                 if (Build.VERSION.SDK_INT >= 25 && accepted) {
                     val description = ClipDescription(
@@ -443,11 +447,9 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
                 val beforeLeft = ic.getTextBeforeCursor(1_000_000, 0)?.toString()
                 val beforeRight = ic.getTextAfterCursor(1_000_000, 0)?.toString()
                 val handled = ic.performContextMenuAction(android.R.id.paste)
-                val afterLeft = ic.getTextBeforeCursor(1_000_000, 0)?.toString()
-                val afterRight = ic.getTextAfterCursor(1_000_000, 0)?.toString()
-                val changed = (beforeLeft != null && afterLeft != null && beforeLeft != afterLeft) ||
-                    (beforeRight != null && afterRight != null && beforeRight != afterRight)
-                if (handled && changed) return true
+                // A handled paste can update the editor asynchronously. Never append a
+                // second plain-text copy merely because cursor snapshots have not changed yet.
+                if (handled) return true
             }
             // 纯文本直接提交，保留空格、换行和完整内容。
             ic.commitText(text, 1)
@@ -473,13 +475,20 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         for (i in 0 until clip.itemCount) {
             val item = clip.getItemAt(i)
             val html = item.htmlText
+            val uri = item.uri ?: item.intent?.data
+            // ClipDescription lists MIME types supported by the whole clip, not one
+            // MIME type per item. Prefer the URI's own resolver type; otherwise use
+            // the first advertised type instead of indexing by item position.
+            val descriptionMime = (0 until clip.description.mimeTypeCount)
+                .asSequence()
+                .map { clip.description.getMimeType(it) }
+                .firstOrNull()
+            val mime = uri?.let { contentResolver.getType(it) } ?: descriptionMime
             val text = item.text?.toString()
                 ?: html?.let { Html.fromHtml(it, Html.FROM_HTML_MODE_LEGACY).toString() }
-            val uri = item.uri ?: item.intent?.data
-            val descriptionMime = if (clip.description.mimeTypeCount > 0) {
-                clip.description.getMimeType(i.coerceAtMost(clip.description.mimeTypeCount - 1))
-            } else null
-            val mime = uri?.let { contentResolver.getType(it) } ?: descriptionMime
+                ?: if (mime?.startsWith("text/") == true && uri != null) {
+                    item.coerceToText(this)?.toString()
+                } else null
             val fileName = uri?.let { copyClipboardUriToFile(it, mime) }
             if (!text.isNullOrEmpty() || fileName != null) {
                 val digest = fileName?.let { digestForFile(File(filesDir, "clipboard/" + it)) }
@@ -551,20 +560,23 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         null
     }
 
+    private fun rememberClipItems(items: List<ClipEntry>) {
+        if (items.isEmpty()) return
+        for (entry in items.asReversed()) {
+            clips.removeAll { it.sameContent(entry) }
+            clips.add(0, entry)
+        }
+        while (clips.size > 30) clips.removeAt(clips.lastIndex)
+        store.putClipEntries(clips)
+        cleanupClipboardFiles()
+        if (panelKind == 1 && ::panel.isInitialized && panel.visibility == View.VISIBLE) {
+            panel.showClipboard(clips)
+        }
+    }
+
     private fun grabClip() {
         try {
-            val items = readClipboardItems(clipboardManager?.primaryClip)
-            if (items.isEmpty()) return
-            for (entry in items.asReversed()) {
-                clips.removeAll { it.sameContent(entry) }
-                clips.add(0, entry)
-            }
-            while (clips.size > 30) clips.removeAt(clips.lastIndex)
-            store.putClipEntries(clips)
-            cleanupClipboardFiles()
-            if (panelKind == 1 && ::panel.isInitialized && panel.visibility == View.VISIBLE) {
-                panel.showClipboard(clips)
-            }
+            rememberClipItems(readClipboardItems(clipboardManager?.primaryClip))
         } catch (_: Exception) {
             // 剪贴板访问权限变化时保留已有历史。
         }
