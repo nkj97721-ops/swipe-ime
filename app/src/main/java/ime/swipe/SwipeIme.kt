@@ -444,8 +444,6 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
             if (!entry.html.isNullOrEmpty()) {
                 val cm = clipboardManager ?: return false
                 cm.setPrimaryClip(ClipData.newHtmlText(entry.label.ifBlank { "text" }, text, entry.html))
-                val beforeLeft = ic.getTextBeforeCursor(1_000_000, 0)?.toString()
-                val beforeRight = ic.getTextAfterCursor(1_000_000, 0)?.toString()
                 val handled = ic.performContextMenuAction(android.R.id.paste)
                 // A handled paste can update the editor asynchronously. Never append a
                 // second plain-text copy merely because cursor snapshots have not changed yet.
