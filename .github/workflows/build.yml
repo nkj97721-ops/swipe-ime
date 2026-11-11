@@ -21,13 +21,12 @@ jobs:
           yes | "$SDKM" --licenses > /dev/null || true
           "$SDKM" "platforms;android-34" "build-tools;34.0.0" > /dev/null
       - name: Build lexicon
+        env:
+          RIME_ICE_REV: 927e1cf1d3eeb9bf4be85e3f684dba4dd485b6f6
         run: |
           mkdir -p lexsrc app/src/main/assets
           fetch() {
-            for b in main master; do
-              curl -fsSL "https://raw.githubusercontent.com/iDvel/rime-ice/$b/cn_dicts/$1.dict.yaml" -o "lexsrc/$1.yaml" && return 0
-            done
-            return 1
+            curl -fsSL "https://raw.githubusercontent.com/iDvel/rime-ice/$RIME_ICE_REV/cn_dicts/$1.dict.yaml" -o "lexsrc/$1.yaml"
           }
           fetch 8105
           fetch base
