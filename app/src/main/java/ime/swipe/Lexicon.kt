@@ -5,122 +5,200 @@ import kotlin.math.ln
 
 class Cand(val text: String, val used: Int)
 
-/** 词库 assets/lex.txt 每行: 拼音(无空格) TAB 词 TAB 权重 已按 拼音升序 权重降序 排好 */
+/** 词库 assets/lex.txt 每行: 拼音 TAB 词 TAB 权重。 */
 class Lexicon {
-    @Volatile
-    var ready = false
-
+    @Volatile var ready = false
+        private set
     private var py: Array<String> = emptyArray()
     private var wd: Array<String> = emptyArray()
     private var wt: IntArray = IntArray(0)
-
-    /** 去重后的拼音串 供滑行匹配 */
     var upy: Array<String> = emptyArray()
+        private set
     var uw: IntArray = IntArray(0)
+        private set
     var maxW: Int = 1
+        private set
     private val bStart = IntArray(27)
+    private var initials: Map<String, IntArray> = emptyMap()
+    private var syllablesByFirst: Map<Char, List<String>> = emptyMap()
 
     fun load(ctx: Context) {
-        val pl = ArrayList<String>(220000)
-        val wl = ArrayList<String>(220000)
-        val tl = ArrayList<Int>(220000)
-        ctx.assets.open("lex.txt").bufferedReader(Charsets.UTF_8).useLines { lines ->
-            for (line in lines) {
-                val a = line.indexOf('\t')
-                if (a <= 0) continue
-                val b = line.indexOf('\t', a + 1)
-                if (b < 0) continue
-                pl.add(line.substring(0, a))
-                wl.add(line.substring(a + 1, b))
-                tl.add(line.substring(b + 1).toIntOrNull() ?: 1)
-            }
-        }
-        py = pl.toTypedArray()
-        wd = wl.toTypedArray()
-        wt = tl.toIntArray()
+        ctx.assets.open("lex.txt").bufferedReader(Charsets.UTF_8).useLines { loadRows(it) }
+    }
 
-        val up = ArrayList<String>()
-        val uwl = ArrayList<Int>()
-        var prev = ""
-        var mx = 1
-        for (k in py.indices) {
-            if (py[k] != prev) {
-                up.add(py[k])
-                uwl.add(wt[k])
-                prev = py[k]
-            }
-            if (wt[k] > mx) mx = wt[k]
+    internal fun loadRows(lines: Sequence<String>) {
+        ready = false
+        val rows = ArrayList<Triple<String, String, Int>>()
+        for (line in lines) {
+            val a = line.indexOf('\t')
+            if (a <= 0) continue
+            val b = line.indexOf('\t', a + 1)
+            if (b < 0) continue
+            val code = line.substring(0, a).lowercase()
+            val word = line.substring(a + 1, b)
+            val weight = line.substring(b + 1).toIntOrNull() ?: 1
+            if (code.isEmpty() || word.isEmpty()) continue
+            rows.add(Triple(code, word, weight.coerceAtLeast(1)))
         }
-        upy = up.toTypedArray()
-        uw = uwl.toIntArray()
-        maxW = mx
+        rows.sortWith(compareBy<Triple<String, String, Int>> { it.first }.thenByDescending { it.third })
+        py = rows.map { it.first }.toTypedArray()
+        wd = rows.map { it.second }.toTypedArray()
+        wt = rows.map { it.third }.toIntArray()
 
-        var i = 0
-        for (f in 0 until 26) {
-            bStart[f] = i
-            while (i < upy.size && (upy[i][0] - 'a') == f) i++
+        val unique = ArrayList<String>()
+        val uniqueWeights = ArrayList<Int>()
+        var previous = ""
+        var maximum = 1
+        for (i in py.indices) {
+            if (py[i] != previous) {
+                unique.add(py[i])
+                uniqueWeights.add(wt[i])
+                previous = py[i]
+            }
+            if (wt[i] > maximum) maximum = wt[i]
+        }
+        upy = unique.toTypedArray()
+        uw = uniqueWeights.toIntArray()
+        maxW = maximum
+
+        var cursor = 0
+        for (first in 0 until 26) {
+            bStart[first] = cursor
+            while (cursor < upy.size && upy[cursor].isNotEmpty() && upy[cursor][0] - 'a' == first) cursor++
         }
         bStart[26] = upy.size
+
+        val syllables = rows.asSequence()
+            .filter { it.second.length == 1 && it.first.length in 1..6 }
+            .map { it.first }.distinct().toList()
+        syllablesByFirst = syllables.groupBy { it.first() }
+            .mapValues { (_, values) -> values.sortedByDescending { it.length } }
+
+        val initialMap = HashMap<String, MutableList<Int>>()
+        for (i in upy.indices) {
+            for (key in segmentInitials(upy[i])) initialMap.getOrPut(key) { ArrayList() }.add(i)
+        }
+        initials = initialMap.mapValues { (_, values) -> values.toIntArray() }
         ready = true
     }
 
-    fun bucket(s: Int): IntRange = bStart[s] until bStart[s + 1]
+    private fun segmentInitials(code: String): Set<String> {
+        val result = LinkedHashSet<String>()
+        val path = StringBuilder()
+        fun visit(offset: Int) {
+            if (result.size >= 12) return
+            if (offset == code.length) {
+                if (path.isNotEmpty()) result.add(path.toString())
+                return
+            }
+            for (syllable in syllablesByFirst[code[offset]].orEmpty()) {
+                if (!code.startsWith(syllable, offset)) continue
+                path.append(syllable[0])
+                visit(offset + syllable.length)
+                path.setLength(path.length - 1)
+                if (result.size >= 12) return
+            }
+        }
+        visit(0)
+        return result
+    }
 
-    /** 第一个 py >= s 的下标 */
-    private fun lower(s: String): Int {
+    fun bucket(s: Int): IntRange =
+        if (s in 0..25) bStart[s] until bStart[s + 1] else IntRange.EMPTY
+
+    private fun lower(value: String): Int {
         var lo = 0
         var hi = py.size
         while (lo < hi) {
-            val m = (lo + hi) ushr 1
-            if (py[m] < s) lo = m + 1 else hi = m
+            val mid = (lo + hi) ushr 1
+            if (py[mid] < value) lo = mid + 1 else hi = mid
         }
         return lo
     }
 
-    private fun score(i: Int, len: Int): Float {
-        return ln(1f + wt[i].toFloat()) + (if (py[i].length == len) 2f else 0f)
+    private fun score(index: Int, inputLength: Int): Float =
+        ln(1f + wt[index].toFloat()) + if (py[index].length == inputLength) 2f else 0f
+
+    private data class Match(val word: String, val used: Int, val score: Float)
+
+    private val fuzzyRules = listOf(
+        "zh" to "z", "z" to "zh", "ch" to "c", "c" to "ch",
+        "sh" to "s", "s" to "sh", "n" to "l", "l" to "n",
+        "eng" to "en", "en" to "eng", "ing" to "in", "in" to "ing",
+        "ang" to "an", "an" to "ang", "ong" to "on", "on" to "ong"
+    )
+
+    private fun fuzzyVariants(input: String): List<String> {
+        val out = LinkedHashSet<String>()
+        for ((from, to) in fuzzyRules) {
+            var at = input.indexOf(from)
+            while (at >= 0) {
+                out.add(input.substring(0, at) + to + input.substring(at + from.length))
+                at = input.indexOf(from, at + 1)
+                if (out.size >= 48) return out.toList()
+            }
+        }
+        out.remove(input)
+        return out.toList()
     }
 
-    /** 敲字候选 整串匹配与补全混排 之后是只消耗前缀的分段候选 */
-    fun candidates(s: String): List<Cand> {
-        if (!ready || s.isEmpty()) return emptyList()
-        val out = ArrayList<Cand>()
-        val seen = HashSet<String>()
+    /** 精确拼音优先，其次模糊拼音，再次首字母简拼。 */
+    fun candidates(raw: String): List<Cand> {
+        val input = raw.lowercase()
+        if (!ready || input.isEmpty()) return emptyList()
+        val matches = LinkedHashMap<String, Match>()
 
-        val idxs = ArrayList<Int>()
-        var i = lower(s)
-        while (i < py.size && idxs.size < 300 && py[i].startsWith(s)) {
-            idxs.add(i)
-            i++
-        }
-        val sorted = idxs.sortedByDescending { score(it, s.length) }
-        for (k in sorted) {
-            if (out.size >= 24) break
-            if (seen.add(wd[k] + "#" + s.length)) out.add(Cand(wd[k], s.length))
-        }
-
-        var len = s.length - 1
-        while (len >= 1 && out.size < 40) {
-            val p = s.substring(0, len)
-            var j = lower(p)
-            var c = 0
-            while (j < py.size && py[j] == p && c < 3) {
-                if (seen.add(wd[j] + "#" + len)) out.add(Cand(wd[j], len))
-                j++
-                c++
+        fun addPrefix(prefix: String, boost: Float, cap: Int) {
+            var index = lower(prefix)
+            var count = 0
+            while (index < py.size && count < cap && py[index].startsWith(prefix)) {
+                val candidate = Match(wd[index], input.length, score(index, input.length) + boost)
+                val old = matches[candidate.word]
+                if (old == null || candidate.score > old.score) matches[candidate.word] = candidate
+                index++
+                count++
             }
-            len--
+        }
+
+        addPrefix(input, 2.5f, 300)
+        for (variant in fuzzyVariants(input)) addPrefix(variant, 0.35f, 60)
+
+        if (input.length >= 2) {
+            for (key in initials.keys.asSequence().filter { it.startsWith(input) }.take(80)) {
+                for (index in initials[key].orEmpty().take(12)) {
+                    val candidate = Match(wd[lower(upy[index])], input.length, ln(1f + uw[index]) - 1f)
+                    val old = matches[candidate.word]
+                    if (old == null || candidate.score > old.score) matches[candidate.word] = candidate
+                }
+            }
+        }
+
+        val out = matches.values.sortedByDescending { it.score }.take(32)
+            .map { Cand(it.word, it.used) }.toMutableList()
+        val seen = out.mapTo(HashSet()) { it.text }
+        var length = input.length - 1
+        while (length >= 1 && out.size < 40) {
+            val prefix = input.substring(0, length)
+            var index = lower(prefix)
+            var count = 0
+            while (index < py.size && py[index] == prefix && count < 3) {
+                if (seen.add(wd[index])) out.add(Cand(wd[index], length))
+                index++
+                count++
+            }
+            length--
         }
         return out
     }
 
-    /** 某个完整拼音对应的词 按权重取前 n 个 */
     fun wordsFor(p: String, n: Int): List<String> {
+        if (!ready || n <= 0) return emptyList()
         val out = ArrayList<String>()
-        var j = lower(p)
-        while (j < py.size && py[j] == p && out.size < n) {
-            out.add(wd[j])
-            j++
+        val code = p.lowercase()
+        var index = lower(code)
+        while (index < py.size && py[index] == code && out.size < n) {
+            out.add(wd[index])
+            index++
         }
         return out
     }
