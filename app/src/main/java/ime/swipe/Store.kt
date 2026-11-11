@@ -31,11 +31,12 @@ class Store(ctx: Context) {
     }
 
     /** 本地上下文词频：只在非敏感输入框里由用户主动选词时更新。 */
-    fun contextScore(previous: String, next: String): Int {
-        if (previous.isBlank() || next.isBlank()) return 0
+    fun contextScores(previous: String, nextWords: List<String>): Map<String, Int> {
+        if (previous.isBlank() || nextWords.isEmpty()) return emptyMap()
         return try {
-            JSONObject(sp.getString("context_pairs", "{}") ?: "{}").optInt("$previous>$next", 0)
-        } catch (_: Exception) { 0 }
+            val data = JSONObject(sp.getString("context_pairs", "{}") ?: "{}")
+            nextWords.associateWith { data.optInt("$previous>$it", 0) }
+        } catch (_: Exception) { emptyMap() }
     }
 
     fun learnContext(previous: String, next: String) {
@@ -90,10 +91,4 @@ class Store(ctx: Context) {
             sp.edit().putInt("bg_alpha", v).apply()
         }
 
-    /** 单手模式 0 关 1 左手 2 右手 */
-    var hand: Int
-        get() = sp.getInt("hand", 0)
-        set(v) {
-            sp.edit().putInt("hand", v).apply()
-        }
 }
