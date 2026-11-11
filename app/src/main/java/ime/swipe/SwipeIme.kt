@@ -246,8 +246,9 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
             return
         }
         val base = lex.candidates(composing.toString())
-        cands = if (contextPreviousWord.isEmpty()) base else base.withIndex()
-            .sortedWith(compareByDescending<IndexedValue<Cand>> { store.contextScore(contextPreviousWord, it.value.text) }.thenBy { it.index })
+        val contextScores = store.contextScores(contextPreviousWord, base.map { it.text })
+        cands = if (contextScores.isEmpty()) base else base.withIndex()
+            .sortedWith(compareByDescending<IndexedValue<Cand>> { contextScores[it.value.text] ?: 0 }.thenBy { it.index })
             .map { it.value }
         showCands(cands.map { it.text })
     }
@@ -426,8 +427,9 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
                 }
                 mainHandler.post {
                     if (serviceDestroyed || generation != glideGeneration || ic !== currentInputConnection || words.isEmpty()) return@post
-                    glideWords = if (contextPreviousWord.isEmpty()) words else words.withIndex()
-                        .sortedWith(compareByDescending<IndexedValue<String>> { store.contextScore(contextPreviousWord, it.value) }.thenBy { it.index })
+                    val contextScores = store.contextScores(contextPreviousWord, words)
+                    glideWords = if (contextScores.isEmpty()) words else words.withIndex()
+                        .sortedWith(compareByDescending<IndexedValue<String>> { contextScores[it.value] ?: 0 }.thenBy { it.index })
                         .map { it.value }
                     mode = 2
                     ic.setComposingText(words[0], 1)
