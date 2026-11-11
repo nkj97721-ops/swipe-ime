@@ -143,6 +143,32 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         }
     }
 
+    override fun onUpdateSelection(
+        oldSelStart: Int,
+        oldSelEnd: Int,
+        newSelStart: Int,
+        newSelEnd: Int,
+        candidatesStart: Int,
+        candidatesEnd: Int
+    ) {
+        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+        if (mode == 1 && candidatesStart >= 0 && candidatesEnd >= candidatesStart) {
+            val composingLength = candidatesEnd - candidatesStart
+            if (composingLength != composing.length || newSelStart != candidatesEnd || newSelEnd != candidatesEnd) {
+                composing.setLength(0)
+                mode = 0
+                clearCands()
+            }
+        } else if (mode == 2 && candidatesStart >= 0 && candidatesEnd >= candidatesStart) {
+            val expectedLength = glideWords.firstOrNull()?.length ?: 0
+            if (candidatesEnd - candidatesStart != expectedLength || newSelStart != candidatesEnd || newSelEnd != candidatesEnd) {
+                mode = 0
+                glideWords = emptyList()
+                clearCands()
+            }
+        }
+    }
+
     private fun isSensitiveEditor(info: EditorInfo?): Boolean {
         if (info == null) return false
         val inputType = info.inputType
@@ -287,6 +313,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
     override fun onBackspace() {
         val ic = currentInputConnection ?: return
+        glideGeneration++
         when (mode) {
             1 -> {
                 if (composing.isEmpty()) {
@@ -316,6 +343,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
     override fun onSpace() {
         val ic = currentInputConnection ?: return
+        glideGeneration++
         when (mode) {
             1 -> if (cands.isNotEmpty()) pick(0) else commitRaw()
             2 -> finishGlide()
@@ -324,6 +352,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     }
 
     override fun onEnter() {
+        glideGeneration++
         when (mode) {
             1 -> commitRaw()
             2 -> finishGlide()
@@ -386,6 +415,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     // ---------- 工具行 ----------
 
     override fun onTool(name: String) {
+        glideGeneration++
         if (name == "clip") {
             togglePanel(1)
             return
