@@ -102,6 +102,8 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
+        root.clipChildren = false
+        root.clipToPadding = false
 
         candScroll = HorizontalScrollView(this)
         candScroll.isHorizontalScrollBarEnabled = false
@@ -114,6 +116,8 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         root.addView(candScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (52 * d).toInt()))
 
         keyboardFrame = FrameLayout(this)
+        keyboardFrame.clipChildren = false
+        keyboardFrame.clipToPadding = false
         kbd = KeyboardView(this, this, decoder, store)
         keyboardFrame.addView(kbd, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowPx * 6))
         panel = PanelView(this, this)
@@ -257,16 +261,12 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         if (mode == 2) finishGlide()
     }
 
-    // ---------- 键盘高度：同步调整键盘容器 ----------
+    // ---------- 空格拖动：移动整个键盘，不改变按键尺寸 ----------
 
-    override fun onKeyboardHeightChanged(heightPx: Int) {
-        if (!::kbd.isInitialized || !::keyboardFrame.isInitialized) return
-        val keyboardParams = kbd.layoutParams
-        keyboardParams.height = heightPx
-        kbd.layoutParams = keyboardParams
-        val frameParams = keyboardFrame.layoutParams as LinearLayout.LayoutParams
-        frameParams.height = heightPx
-        keyboardFrame.layoutParams = frameParams
+    override fun onKeyboardDrag(deltaY: Float) {
+        if (!::keyboardFrame.isInitialized) return
+        val maxUp = keyboardFrame.height * 0.62f
+        keyboardFrame.translationY = (keyboardFrame.translationY + deltaY).coerceIn(-maxUp, 0f)
     }
 
     // ---------- 键盘事件 ----------
