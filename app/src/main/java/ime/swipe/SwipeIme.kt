@@ -82,7 +82,19 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         store.prefs().registerOnSharedPreferenceChangeListener(prefListener)
         clipboardManager = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboardManager?.addPrimaryClipChangedListener(clipListener)
-        Thread { lex.load(applicationContext) }.start()
+        Thread {
+            try {
+                lex.load(applicationContext)
+            } catch (_: Exception) {
+                // 词库读取失败时保持输入法可用；候选栏不会因后台异常导致服务崩溃。
+            } finally {
+                mainHandler.post {
+                    if (!serviceDestroyed && mode == 1 && composing.isNotEmpty()) {
+                        refreshTyped()
+                    }
+                }
+            }
+        }.start()
     }
 
     override fun onDestroy() {
@@ -103,6 +115,8 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
+        // 键盘上移后露出的区域保持纯黑，不显示透明空洞。
+        root.setBackgroundColor(Color.BLACK)
         root.clipChildren = false
         root.clipToPadding = false
 
@@ -432,8 +446,9 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
                         .sortedWith(compareByDescending<IndexedValue<String>> { contextScores[it.value] ?: 0 }.thenBy { it.index })
                         .map { it.value }
                     mode = 2
-                    ic.setComposingText(words[0], 1)
-                    showCands(words)
+                    // 候选栏顺序必须与点击索引一致，使用经过上下文排序的同一列表。
+                    ic.setComposingText(glideWords.first(), 1)
+                    showCands(glideWords)
                 }
             }
         } catch (_: Exception) {
