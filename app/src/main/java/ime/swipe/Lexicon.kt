@@ -20,6 +20,7 @@ class Lexicon {
         private set
     private val bStart = IntArray(27)
     private var initials: Map<String, IntArray> = emptyMap()
+    private var initialKeys: Array<String> = emptyArray()
     private var syllablesByFirst: Map<Char, List<String>> = emptyMap()
 
     fun load(ctx: Context) {
@@ -79,6 +80,7 @@ class Lexicon {
             for (key in segmentInitials(upy[i])) initialMap.getOrPut(key) { ArrayList() }.add(i)
         }
         initials = initialMap.mapValues { (_, values) -> values.toIntArray() }
+        initialKeys = initials.keys.sorted().toTypedArray()
         ready = true
     }
 
@@ -133,7 +135,9 @@ class Lexicon {
         for ((from, to) in fuzzyRules) {
             var at = input.indexOf(from)
             while (at >= 0) {
-                out.add(input.substring(0, at) + to + input.substring(at + from.length))
+                val protectedDigraph = from.length == 1 && (from == "z" || from == "c" || from == "s") &&
+                    at + 1 < input.length && input[at + 1] == "h"[0]
+                if (!protectedDigraph) out.add(input.substring(0, at) + to + input.substring(at + from.length))
                 at = input.indexOf(from, at + 1)
                 if (out.size >= 48) return out.toList()
             }
@@ -164,7 +168,11 @@ class Lexicon {
         for (variant in fuzzyVariants(input)) addPrefix(variant, 0.35f, 60)
 
         if (input.length >= 2) {
-            for (key in initials.keys.asSequence().filter { it.startsWith(input) }.take(80)) {
+            var keyIndex = initialKeys.binarySearch(input).let { if (it >= 0) it else -it - 1 }
+            var keyCount = 0
+            while (keyIndex < initialKeys.size && keyCount < 80 && initialKeys[keyIndex].startsWith(input)) {
+                val key = initialKeys[keyIndex++]
+                keyCount++
                 for (index in initials[key].orEmpty().take(12)) {
                     val candidate = Match(wd[lower(upy[index])], input.length, ln(1f + uw[index]) - 1f)
                     val old = matches[candidate.word]
