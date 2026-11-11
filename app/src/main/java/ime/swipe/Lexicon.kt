@@ -173,7 +173,7 @@ class Lexicon {
             while (keyIndex < initialKeys.size && keyCount < 80 && initialKeys[keyIndex].startsWith(input)) {
                 val key = initialKeys[keyIndex++]
                 keyCount++
-                for (index in initials[key].orEmpty().take(12)) {
+                for (index in (initials[key] ?: IntArray(0)).take(12)) {
                     val candidate = Match(wd[lower(upy[index])], input.length, ln(1f + uw[index]) - 1f)
                     val old = matches[candidate.word]
                     if (old == null || candidate.score > old.score) matches[candidate.word] = candidate
