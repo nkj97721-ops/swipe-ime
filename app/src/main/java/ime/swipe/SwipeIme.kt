@@ -292,7 +292,9 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     override fun onKeyboardDrag(deltaY: Float) {
         if (!::keyboardFrame.isInitialized) return
         val maxUp = keyboardFrame.height * 0.62f
-        keyboardFrame.translationY = (keyboardFrame.translationY + deltaY).coerceIn(-maxUp, 0f)
+        val offset = (keyboardFrame.translationY + deltaY).coerceIn(-maxUp, 0f)
+        keyboardFrame.translationY = offset
+        if (::candScroll.isInitialized) candScroll.translationY = offset
     }
 
     // ---------- 键盘事件 ----------
