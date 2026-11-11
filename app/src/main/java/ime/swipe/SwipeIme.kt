@@ -58,6 +58,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private val glideExecutor = Executors.newSingleThreadExecutor()
     @Volatile private var glideGeneration = 0
     private var sensitiveEditor = false
+    private var contextPreviousWord = ""
     private val mainHandler = Handler(Looper.getMainLooper())
     private val pendingClipFiles = Collections.synchronizedSet(mutableSetOf<String>())
     @Volatile private var serviceDestroyed = false
@@ -133,6 +134,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         super.onStartInputView(info, restarting)
         glideGeneration++
         sensitiveEditor = isSensitiveEditor(info ?: currentInputEditorInfo)
+        contextPreviousWord = ""
         composing.setLength(0)
         mode = 0
         if (::candRow.isInitialized) clearCands()
@@ -167,6 +169,17 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
                 clearCands()
             }
         }
+    }
+
+    private fun previousChineseWord(text: String): String {
+        val value = text.trimEnd()
+        var start = value.length
+        while (start > 0 && start >= value.length - 4) {
+            val code = value[start - 1].code
+            if (code !in 0x4E00..0x9FFF) break
+            start--
+        }
+        return value.substring(start)
     }
 
     private fun isSensitiveEditor(info: EditorInfo?): Boolean {
@@ -232,7 +245,10 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
             clearCands()
             return
         }
-        cands = lex.candidates(composing.toString())
+        val base = lex.candidates(composing.toString())
+        cands = if (contextPreviousWord.isEmpty()) base else base.withIndex()
+            .sortedWith(compareByDescending<IndexedValue<Cand>> { store.contextScore(contextPreviousWord, it.value.text) }.thenBy { it.index })
+            .map { it.value }
         showCands(cands.map { it.text })
     }
 
@@ -241,6 +257,8 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         if (mode == 1) {
             if (i >= cands.size) return
             val cd = cands[i]
+            if (!sensitiveEditor && contextPreviousWord.isNotEmpty()) store.learnContext(contextPreviousWord, cd.text)
+            contextPreviousWord = cd.text
             val used = minOf(cd.used, composing.length)
             ic.beginBatchEdit()
             ic.commitText(cd.text, 1)
@@ -255,7 +273,10 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
             }
         } else if (mode == 2) {
             if (i >= glideWords.size) return
-            ic.commitText(glideWords[i], 1)
+            val chosen = glideWords[i]
+            if (!sensitiveEditor && contextPreviousWord.isNotEmpty()) store.learnContext(contextPreviousWord, chosen)
+            contextPreviousWord = chosen
+            ic.commitText(chosen, 1)
             mode = 0
             clearCands()
         }
@@ -301,6 +322,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
     override fun onLetter(c: Char) {
         val ic = currentInputConnection ?: return
+        if (composing.isEmpty() && !sensitiveEditor) contextPreviousWord = previousChineseWord(ic.getTextBeforeCursor(32, 0)?.toString().orEmpty())
         glideGeneration++
         if (mode == 2) finishGlide()
         if (sensitiveEditor) {
@@ -383,6 +405,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     override fun onGlide(xs: FloatArray, ys: FloatArray, n: Int) {
         val ic = currentInputConnection ?: return
         if (sensitiveEditor) return
+        if (mode != 1) contextPreviousWord = previousChineseWord(ic.getTextBeforeCursor(32, 0)?.toString().orEmpty())
         settle()
         val generation = ++glideGeneration
         val pathX = xs.copyOf(n)
@@ -403,7 +426,9 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
                 }
                 mainHandler.post {
                     if (serviceDestroyed || generation != glideGeneration || ic !== currentInputConnection || words.isEmpty()) return@post
-                    glideWords = words
+                    glideWords = if (contextPreviousWord.isEmpty()) words else words.withIndex()
+                        .sortedWith(compareByDescending<IndexedValue<String>> { store.contextScore(contextPreviousWord, it.value) }.thenBy { it.index })
+                        .map { it.value }
                     mode = 2
                     ic.setComposingText(words[0], 1)
                     showCands(words)
