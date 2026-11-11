@@ -10,6 +10,7 @@ import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.text.Html
 import android.inputmethodservice.InputMethodService
+import android.text.InputType
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -54,6 +55,9 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private var panelKind = 0 // 0 无 1 剪贴板 2 常用语
     private var clipboardManager: ClipboardManager? = null
     private val clipboardExecutor = Executors.newSingleThreadExecutor()
+    private val glideExecutor = Executors.newSingleThreadExecutor()
+    @Volatile private var glideGeneration = 0
+    private var sensitiveEditor = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private val pendingClipFiles = Collections.synchronizedSet(mutableSetOf<String>())
     @Volatile private var serviceDestroyed = false
@@ -85,6 +89,8 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         clipboardManager = null
         serviceDestroyed = true
         clipboardExecutor.shutdownNow()
+        glideGeneration++
+        glideExecutor.shutdownNow()
         mainHandler.removeCallbacksAndMessages(null)
         if (::store.isInitialized) store.prefs().unregisterOnSharedPreferenceChangeListener(prefListener)
         super.onDestroy()
@@ -121,14 +127,35 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        glideGeneration++
+        sensitiveEditor = isSensitiveEditor(info ?: currentInputEditorInfo)
         composing.setLength(0)
         mode = 0
         if (::candRow.isInitialized) clearCands()
         if (::panel.isInitialized) hidePanel()
+        if (::kbd.isInitialized) {
+            val inputClass = (info?.inputType ?: currentInputEditorInfo?.inputType ?: 0) and InputType.TYPE_MASK_CLASS
+            kbd.setEditorNumericMode(inputClass == InputType.TYPE_CLASS_NUMBER || inputClass == InputType.TYPE_CLASS_PHONE)
+        }
+    }
+
+    private fun isSensitiveEditor(info: EditorInfo?): Boolean {
+        if (info == null) return false
+        val inputType = info.inputType
+        val inputClass = inputType and InputType.TYPE_MASK_CLASS
+        val variation = inputType and InputType.TYPE_MASK_VARIATION
+        val password = (inputClass == InputType.TYPE_CLASS_TEXT && variation in setOf(
+            InputType.TYPE_TEXT_VARIATION_PASSWORD,
+            InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
+            InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
+        )) || (inputClass == InputType.TYPE_CLASS_NUMBER &&
+            variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD)
+        return password || (info.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
+        glideGeneration++
         currentInputConnection?.finishComposingText()
         composing.setLength(0)
         mode = 0
@@ -170,6 +197,11 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     }
 
     private fun refreshTyped() {
+        if (sensitiveEditor) {
+            cands = emptyList()
+            clearCands()
+            return
+        }
         cands = lex.candidates(composing.toString())
         showCands(cands.map { it.text })
     }
@@ -241,8 +273,13 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
     override fun onLetter(c: Char) {
         val ic = currentInputConnection ?: return
+        glideGeneration++
         if (mode == 2) finishGlide()
-        composing.append(c)
+        if (sensitiveEditor) {
+            ic.commitText(c.lowercaseChar().toString(), 1)
+            return
+        }
+        composing.append(c.lowercaseChar())
         mode = 1
         ic.setComposingText(composing.toString(), 1)
         refreshTyped()
@@ -307,26 +344,43 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
     override fun onText(s: String) {
         val ic = currentInputConnection ?: return
+        glideGeneration++
         settle()
         ic.commitText(s, 1)
     }
 
     override fun onGlide(xs: FloatArray, ys: FloatArray, n: Int) {
         val ic = currentInputConnection ?: return
+        if (sensitiveEditor) return
         settle()
-        val hits = decoder.decode(xs, ys, n, 8)
-        if (hits.isEmpty()) return
-        val words = ArrayList<String>()
-        for (h in hits) {
-            for (w in lex.wordsFor(h.py, 3)) {
-                if (!words.contains(w)) words.add(w)
+        val generation = ++glideGeneration
+        val pathX = xs.copyOf(n)
+        val pathY = ys.copyOf(n)
+        try {
+            glideExecutor.execute {
+                val words = try {
+                    val hits = decoder.decode(pathX, pathY, n, 8)
+                    val found = ArrayList<String>()
+                    for (hit in hits) {
+                        for (word in lex.wordsFor(hit.py, 3)) {
+                            if (!found.contains(word)) found.add(word)
+                        }
+                    }
+                    found
+                } catch (_: Exception) {
+                    emptyList()
+                }
+                mainHandler.post {
+                    if (serviceDestroyed || generation != glideGeneration || ic !== currentInputConnection || words.isEmpty()) return@post
+                    glideWords = words
+                    mode = 2
+                    ic.setComposingText(words[0], 1)
+                    showCands(words)
+                }
             }
+        } catch (_: Exception) {
+            // The service may be shutting down; discard this gesture.
         }
-        if (words.isEmpty()) return
-        glideWords = words
-        mode = 2
-        ic.setComposingText(words[0], 1)
-        showCands(words)
     }
 
     // ---------- 工具行 ----------
@@ -600,7 +654,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     }
 
     private fun rememberClipItems(items: List<ClipEntry>) {
-        if (items.isEmpty()) return
+        if (sensitiveEditor || items.isEmpty()) return
         for (entry in items.asReversed()) {
             entry.fileName?.let { pendingClipFiles.remove(it) }
             clips.removeAll { it.sameContent(entry) }
@@ -615,6 +669,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     }
 
     private fun grabClip() {
+        if (sensitiveEditor) return
         val clip = try { clipboardManager?.primaryClip } catch (_: Exception) { null } ?: return
         if (clip.itemCount == 0) return
         try {
@@ -638,6 +693,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     }
 
     private fun togglePanel(kind: Int) {
+        if (sensitiveEditor) return
         if (panelKind == kind) {
             hidePanel()
             return
