@@ -19,6 +19,7 @@ class GlideDecoder(private val lex: Lexicon) {
     private val ix = FloatArray(64)
     private val iy = FloatArray(64)
 
+    @Synchronized
     fun setLayout(x: FloatArray, y: FloatArray, keyWidth: Float) {
         cx = x.copyOf()
         cy = y.copyOf()
@@ -74,6 +75,7 @@ class GlideDecoder(private val lex: Lexicon) {
         return r
     }
 
+    @Synchronized
     fun decode(xs: FloatArray, ys: FloatArray, n: Int, top: Int): List<Hit> {
         if (!lex.ready || n < 2) return emptyList()
         val lin = resample(xs, ys, n, sx, sy)
