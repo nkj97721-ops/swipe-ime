@@ -30,6 +30,39 @@ class Store(ctx: Context) {
         sp.edit().putString(key, JSONArray(l).toString()).apply()
     }
 
+    /** 本地上下文词频：只在非敏感输入框里由用户主动选词时更新。 */
+    fun contextScore(previous: String, next: String): Int {
+        if (previous.isBlank() || next.isBlank()) return 0
+        return try {
+            JSONObject(sp.getString("context_pairs", "{}") ?: "{}").optInt("$previous>$next", 0)
+        } catch (_: Exception) { 0 }
+    }
+
+    fun learnContext(previous: String, next: String) {
+        if (previous.isBlank() || next.isBlank()) return
+        try {
+            val data = JSONObject(sp.getString("context_pairs", "{}") ?: "{}")
+            val key = "$previous>$next"
+            data.put(key, (data.optInt(key, 0) + 1).coerceAtMost(10000))
+            while (data.length() > 512) {
+                var weakestKey: String? = null
+                var weakestValue = Int.MAX_VALUE
+                val keys = data.keys()
+                while (keys.hasNext()) {
+                    val candidate = keys.next()
+                    val value = data.optInt(candidate, 0)
+                    if (value < weakestValue) {
+                        weakestValue = value
+                        weakestKey = candidate
+                    }
+                }
+                if (weakestKey == null) break
+                data.remove(weakestKey)
+            }
+            sp.edit().putString("context_pairs", data.toString()).apply()
+        } catch (_: Exception) { }
+    }
+
     fun getClipEntries(): MutableList<ClipEntry> {
         val raw = sp.getString("clip_entries", null)
         if (raw != null) {
