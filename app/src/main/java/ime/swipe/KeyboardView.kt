@@ -65,6 +65,7 @@ class KeyboardView(
     private var gthr = 30f
     private var bgA = store.bgAlpha * 255 / 100
     private var uppercase = false
+    private var editorNumericMode = false
 
     var activeTool: String? = null
     private val big = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textAlign = Paint.Align.CENTER }
@@ -120,6 +121,13 @@ class KeyboardView(
     private val px = FloatArray(1024)
     private val py = FloatArray(1024)
     private val pt = LongArray(1024)
+
+    fun setEditorNumericMode(enabled: Boolean) {
+        if (editorNumericMode == enabled) return
+        editorNumericMode = enabled
+        panel = if (enabled) Panel.NUM else Panel.LETTERS
+        invalidate()
+    }
 
     fun setBgAlpha(a: Int) {
         bgA = a
