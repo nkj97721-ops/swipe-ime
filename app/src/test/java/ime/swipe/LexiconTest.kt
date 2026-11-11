@@ -14,6 +14,7 @@ class LexiconTest {
             "ni\t你\t200",
             "nihao\t你好\t600",
             "zhang\t张\t300",
+            "zhhang\t误匹配\t900",
             "zhong\t中\t200",
             "zhongguo\t中国\t700"
         ))
@@ -29,6 +30,10 @@ class LexiconTest {
 
     @Test fun initialsFindMultiSyllablePhrase() {
         assertTrue(sample().candidates("bj").any { it.text == "北京" })
+    }
+
+    @Test fun alreadyRetroflexInputDoesNotCreateDoubleHVariant() {
+        assertFalse(sample().candidates("zhang").any { it.text == "误匹配" })
     }
 
     @Test fun uppercaseInputIsNormalized() {
