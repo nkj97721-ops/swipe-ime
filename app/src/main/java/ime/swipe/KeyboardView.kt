@@ -48,7 +48,7 @@ class KeyboardView(
         fun onText(s: String)
         fun onGlide(xs: FloatArray, ys: FloatArray, n: Int)
         fun onTool(name: String)
-        fun onKeyboardHeightChanged(heightPx: Int)
+        fun onKeyboardDrag(deltaY: Float)
     }
 
     private val dp = resources.displayMetrics.density
@@ -61,7 +61,7 @@ class KeyboardView(
     private var panel = Panel.LETTERS
     private var numLeftW = 0f
     private var rowH = 0f
-    private var bottomRowHeight = 57f * dp
+    private val bottomRowHeight = 57f * dp
     private var gthr = 30f
     private var bgA = store.bgAlpha * 255 / 100
     private var uppercase = false
@@ -100,7 +100,7 @@ class KeyboardView(
     private var cursorJumpLongPressed = false
     private var spaceDragging = false
     private var spaceDownRawY = 0f
-    private var spaceDownBottomHeight = 57f * dp
+    private var spaceLastRawY = 0f
     private val cursorJumpHandler = Handler(Looper.getMainLooper())
     private val cursorJumpLongPress = object : Runnable {
         override fun run() {
@@ -123,7 +123,6 @@ class KeyboardView(
     private val pt = LongArray(1024)
 
     fun setEditorNumericMode(enabled: Boolean) {
-        if (editorNumericMode == enabled) return
         editorNumericMode = enabled
         panel = if (enabled) Panel.NUM else Panel.LETTERS
         invalidate()
@@ -364,7 +363,7 @@ class KeyboardView(
                 }
                 if (k != null && k.kind == Kind.SPACE) {
                     spaceDownRawY = e.rawY
-                    spaceDownBottomHeight = bottomRowHeight
+                    spaceLastRawY = e.rawY
                     spaceDragging = false
                 }
                 if (k != null && k.kind == Kind.BACK) {
@@ -394,18 +393,15 @@ class KeyboardView(
                         }
                     }
                 } else if (k.kind == Kind.SPACE) {
-                    val dragDistance = spaceDownRawY - e.rawY
+                    val dragDistance = e.rawY - spaceDownRawY
                     if (!spaceDragging && kotlin.math.abs(dragDistance) > 3f * dp) {
                         spaceDragging = true
+                        host.onKeyboardDrag(dragDistance)
+                    } else if (spaceDragging) {
+                        val delta = e.rawY - spaceLastRawY
+                        if (kotlin.math.abs(delta) >= 0.5f) host.onKeyboardDrag(delta)
                     }
-                    if (spaceDragging) {
-                        val nextHeight = (spaceDownBottomHeight + dragDistance).coerceIn(24f * dp, 296f * dp)
-                        if (kotlin.math.abs(nextHeight - bottomRowHeight) >= 1f) {
-                            bottomRowHeight = nextHeight
-                            host.onKeyboardHeightChanged((5f * rowH + bottomRowHeight).toInt())
-                            requestLayout()
-                        }
-                    }
+                    spaceLastRawY = e.rawY
                 } else if (k.kind == Kind.COMMA) {
                     if (dy - e.y > 0.45f * rowH) swipedUp = true
                 } else if (k.kind == Kind.TOOL && (k.value == "left" || k.value == "right")) {
