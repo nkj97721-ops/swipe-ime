@@ -61,7 +61,7 @@ class KeyboardView(
     private var panel = Panel.LETTERS
     private var numLeftW = 0f
     private var rowH = 0f
-    private val bottomRowHeight = 57f * dp
+    private var bottomRowHeight = 57f * dp
     private var gthr = 30f
     private var bgA = store.bgAlpha * 255 / 100
     private var uppercase = false
@@ -130,6 +130,25 @@ class KeyboardView(
 
     fun setBgAlpha(a: Int) {
         bgA = a
+        invalidate()
+    }
+
+    /**
+     * 调整最底部工具行高度。手指上滑(deltaY < 0)时增高，
+     * 下滑(deltaY > 0)时降低；上方五行按键尺寸保持不变。
+     */
+    fun adjustBottomRowHeight(deltaY: Float) {
+        val minHeight = 28f * dp
+        val maxHeight = 150f * dp
+        bottomRowHeight = (bottomRowHeight + deltaY).coerceIn(minHeight, maxHeight)
+        val totalHeight = (5f * 57f * dp + bottomRowHeight).toInt()
+        layoutParams = layoutParams?.apply { height = totalHeight }
+        (parent as? View)?.let { container ->
+            container.layoutParams = container.layoutParams?.apply { height = totalHeight }
+            container.requestLayout()
+        }
+        requestLayout()
+        buildKeys(width.toFloat(), totalHeight.toFloat())
         invalidate()
     }
 
