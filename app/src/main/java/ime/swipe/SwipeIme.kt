@@ -168,16 +168,17 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         candidatesEnd: Int
     ) {
         super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
-        if (mode == 1 && candidatesStart >= 0 && candidatesEnd >= candidatesStart) {
-            val composingLength = candidatesEnd - candidatesStart
-            if (composingLength != composing.length || newSelStart != candidatesEnd || newSelEnd != candidatesEnd) {
+        // candidatesStart/candidatesEnd 是编辑器候选区，不是 composing 文本范围；
+        // 用它们判断拼音长度会误清空候选栏。仅在用户产生非折叠选区时结束当前组合。
+        if (newSelStart != newSelEnd) {
+            if (mode == 1) {
+                currentInputConnection?.finishComposingText()
                 composing.setLength(0)
                 mode = 0
+                cands = emptyList()
                 clearCands()
-            }
-        } else if (mode == 2 && candidatesStart >= 0 && candidatesEnd >= candidatesStart) {
-            val expectedLength = glideWords.firstOrNull()?.length ?: 0
-            if (candidatesEnd - candidatesStart != expectedLength || newSelStart != candidatesEnd || newSelEnd != candidatesEnd) {
+            } else if (mode == 2) {
+                currentInputConnection?.finishComposingText()
                 mode = 0
                 glideWords = emptyList()
                 clearCands()
@@ -323,14 +324,11 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         if (mode == 2) finishGlide()
     }
 
-    // ---------- 空格拖动：移动整个键盘，不改变按键尺寸 ----------
+    // ---------- 空格上下拖动：只伸缩最底部工具行，键盘顶部保持贴合 ----------
 
     override fun onKeyboardDrag(deltaY: Float) {
-        if (!::keyboardFrame.isInitialized) return
-        val maxUp = keyboardFrame.height * 0.62f
-        val offset = (keyboardFrame.translationY + deltaY).coerceIn(-maxUp, 0f)
-        keyboardFrame.translationY = offset
-        if (::candScroll.isInitialized) candScroll.translationY = offset
+        if (!::kbd.isInitialized) return
+        kbd.adjustBottomRowHeight(-deltaY)
     }
 
     // ---------- 键盘事件 ----------
