@@ -147,9 +147,52 @@ class Lexicon {
     }
 
     /** 精确拼音优先，其次模糊拼音，再次首字母简拼。 */
+    private val emergencyWords = mapOf(
+        "a" to listOf("啊", "阿", "爱", "安", "按", "俺"),
+        "ai" to listOf("爱", "哎", "唉", "矮", "挨", "癌"),
+        "an" to listOf("安", "按", "案", "俺", "暗"),
+        "ba" to listOf("把", "吧", "八", "爸", "巴"),
+        "bu" to listOf("不", "部", "步", "布", "补"),
+        "chi" to listOf("吃", "迟", "持", "池"),
+        "da" to listOf("大", "打", "达", "答"),
+        "de" to listOf("的", "得", "德"),
+        "di" to listOf("地", "第", "低", "滴"),
+        "hao" to listOf("好", "号", "豪", "耗"),
+        "he" to listOf("和", "喝", "何", "合"),
+        "ji" to listOf("几", "及", "机", "记", "既"),
+        "jian" to listOf("见", "间", "件", "建", "简"),
+        "jin" to listOf("今", "进", "近", "金"),
+        "ke" to listOf("可", "课", "客", "科"),
+        "lai" to listOf("来", "莱", "赖"),
+        "le" to listOf("了", "乐"),
+        "ma" to listOf("吗", "妈", "马", "嘛"),
+        "mei" to listOf("没", "每", "美", "妹"),
+        "ni" to listOf("你", "呢", "泥"),
+        "hao" to listOf("好", "号", "豪", "耗"),
+        "shi" to listOf("是", "时", "事", "使", "市"),
+        "wo" to listOf("我", "握", "窝"),
+        "xi" to listOf("系", "西", "洗", "喜"),
+        "xie" to listOf("写", "些", "谢", "鞋"),
+        "yao" to listOf("要", "也", "药", "摇"),
+        "yi" to listOf("一", "以", "已", "意", "衣"),
+        "you" to listOf("有", "又", "由", "友"),
+        "zhong" to listOf("中", "种", "重", "众"),
+        "zai" to listOf("在", "再", "载"),
+        "zhe" to listOf("这", "着", "者")
+    )
+
+    private fun fallbackCandidates(input: String): List<Cand> =
+        emergencyWords.entries.asSequence()
+            .filter { it.key.startsWith(input) || input.startsWith(it.key) }
+            .flatMap { (code, words) -> words.asSequence().map { Cand(it, minOf(code.length, input.length)) } }
+            .distinctBy { it.text }
+            .take(20)
+            .toList()
+
     fun candidates(raw: String): List<Cand> {
         val input = raw.lowercase()
-        if (!ready || input.isEmpty()) return emptyList()
+        if (input.isEmpty()) return emptyList()
+        if (!ready) return fallbackCandidates(input)
         val matches = LinkedHashMap<String, Match>()
 
         fun addPrefix(prefix: String, boost: Float, cap: Int) {
@@ -196,7 +239,7 @@ class Lexicon {
             }
             length--
         }
-        return out
+        return if (out.isNotEmpty()) out else fallbackCandidates(input)
     }
 
     fun wordsFor(p: String, n: Int): List<String> {
