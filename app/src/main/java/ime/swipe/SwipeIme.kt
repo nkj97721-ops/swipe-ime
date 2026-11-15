@@ -57,7 +57,12 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     private val clipboardExecutor = Executors.newSingleThreadExecutor()
     private val glideExecutor = Executors.newSingleThreadExecutor()
     @Volatile private var glideGeneration = 0
+
+    // 密码类输入框：不显示候选、不滑行、不记录任何内容。
     private var sensitiveEditor = false
+    // 编辑器要求不做个性化学习 (例如浏览器无痕标签页)：仍可正常输入中文，
+    // 但不记录上下文词频和剪贴板历史，也不用已有的个性化数据排序。
+    private var noLearning = false
     private var contextPreviousWord = ""
     private val mainHandler = Handler(Looper.getMainLooper())
     private val pendingClipFiles = Collections.synchronizedSet(mutableSetOf<String>())
@@ -109,6 +114,9 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         super.onDestroy()
     }
 
+    /** 横屏时不进入系统全屏提取模式，否则整个屏幕会被键盘和提取文本框占满 */
+    override fun onEvaluateFullscreenMode(): Boolean = false
+
     override fun onCreateInputView(): View {
         val d = resources.displayMetrics.density
         val rowPx = (57 * d).toInt()
@@ -147,7 +155,9 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         glideGeneration++
-        sensitiveEditor = isSensitiveEditor(info ?: currentInputEditorInfo)
+        val editorInfo = info ?: currentInputEditorInfo
+        sensitiveEditor = isSensitiveEditor(editorInfo)
+        noLearning = isNoLearningEditor(editorInfo)
         contextPreviousWord = ""
         composing.setLength(0)
         mode = 0
@@ -204,19 +214,22 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         return value.substring(start)
     }
 
+    /** 只有真正的密码类输入框才算敏感 */
     private fun isSensitiveEditor(info: EditorInfo?): Boolean {
         if (info == null) return false
         val inputType = info.inputType
         val inputClass = inputType and InputType.TYPE_MASK_CLASS
         val variation = inputType and InputType.TYPE_MASK_VARIATION
-        val password = (inputClass == InputType.TYPE_CLASS_TEXT && variation in setOf(
+        return (inputClass == InputType.TYPE_CLASS_TEXT && variation in setOf(
             InputType.TYPE_TEXT_VARIATION_PASSWORD,
             InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
             InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
         )) || (inputClass == InputType.TYPE_CLASS_NUMBER &&
             variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD)
-        return password || (info.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
     }
+
+    private fun isNoLearningEditor(info: EditorInfo?): Boolean =
+        info != null && (info.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
 
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
@@ -280,8 +293,8 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         if (mode == 1) {
             if (i >= cands.size) return
             val cd = cands[i]
-            if (!sensitiveEditor && contextPreviousWord.isNotEmpty()) store.learnContext(contextPreviousWord, cd.text)
-            contextPreviousWord = cd.text
+            if (!sensitiveEditor && !noLearning && contextPreviousWord.isNotEmpty()) store.learnContext(contextPreviousWord, cd.text)
+            contextPreviousWord = if (noLearning) "" else cd.text
             val used = minOf(cd.used, composing.length)
             ic.beginBatchEdit()
             ic.commitText(cd.text, 1)
@@ -297,8 +310,8 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         } else if (mode == 2) {
             if (i >= glideWords.size) return
             val chosen = glideWords[i]
-            if (!sensitiveEditor && contextPreviousWord.isNotEmpty()) store.learnContext(contextPreviousWord, chosen)
-            contextPreviousWord = chosen
+            if (!sensitiveEditor && !noLearning && contextPreviousWord.isNotEmpty()) store.learnContext(contextPreviousWord, chosen)
+            contextPreviousWord = if (noLearning) "" else chosen
             ic.commitText(chosen, 1)
             mode = 0
             clearCands()
@@ -342,7 +355,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
     override fun onLetter(c: Char) {
         val ic = currentInputConnection ?: return
-        if (composing.isEmpty() && !sensitiveEditor) contextPreviousWord = previousChineseWord(ic.getTextBeforeCursor(32, 0)?.toString().orEmpty())
+        if (composing.isEmpty() && !sensitiveEditor && !noLearning) contextPreviousWord = previousChineseWord(ic.getTextBeforeCursor(32, 0)?.toString().orEmpty())
         glideGeneration++
         if (mode == 2) finishGlide()
         if (sensitiveEditor) {
@@ -431,7 +444,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
             return
         }
         if (sensitiveEditor) return
-        if (mode != 1) contextPreviousWord = previousChineseWord(ic.getTextBeforeCursor(32, 0)?.toString().orEmpty())
+        if (mode != 1) contextPreviousWord = if (noLearning) "" else previousChineseWord(ic.getTextBeforeCursor(32, 0)?.toString().orEmpty())
         settle()
         val generation = ++glideGeneration
         val pathX = xs.copyOf(n)
@@ -739,7 +752,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     }
 
     private fun rememberClipItems(items: List<ClipEntry>) {
-        if (sensitiveEditor || items.isEmpty()) return
+        if (sensitiveEditor || noLearning || items.isEmpty()) return
         for (entry in items.asReversed()) {
             entry.fileName?.let { pendingClipFiles.remove(it) }
             clips.removeAll { it.sameContent(entry) }
@@ -754,7 +767,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     }
 
     private fun grabClip() {
-        if (sensitiveEditor) return
+        if (sensitiveEditor || noLearning) return
         val clip = try { clipboardManager?.primaryClip } catch (_: Exception) { null } ?: return
         if (clip.itemCount == 0) return
         try {
