@@ -168,22 +168,29 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         candidatesEnd: Int
     ) {
         super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
-        // candidatesStart/candidatesEnd 是编辑器候选区，不是 composing 文本范围；
-        // 用它们判断拼音长度会误清空候选栏。仅在用户产生非折叠选区时结束当前组合。
+        if (mode == 0) return
+        // candidatesStart/candidatesEnd 不可靠，用它们判断拼音长度会误清空候选栏。
+        // 非折叠选区直接结束组合。
         if (newSelStart != newSelEnd) {
-            if (mode == 1) {
-                currentInputConnection?.finishComposingText()
-                composing.setLength(0)
-                mode = 0
-                cands = emptyList()
-                clearCands()
-            } else if (mode == 2) {
-                currentInputConnection?.finishComposingText()
-                mode = 0
-                glideWords = emptyList()
-                clearCands()
-            }
+            resetComposition()
+            return
         }
+        // 选区折叠时核对光标前的文字是否仍是正在组合的内容。
+        // 用户点击输入框其他位置移动光标后两者不一致，必须丢弃组合状态，
+        // 否则下一个字母会把旧拼音重新写到新位置。
+        val shown = if (mode == 1) composing.toString() else glideWords.firstOrNull().orEmpty()
+        if (shown.isEmpty()) return
+        val before = currentInputConnection?.getTextBeforeCursor(shown.length, 0)?.toString() ?: return
+        if (before != shown) resetComposition()
+    }
+
+    private fun resetComposition() {
+        currentInputConnection?.finishComposingText()
+        composing.setLength(0)
+        cands = emptyList()
+        glideWords = emptyList()
+        mode = 0
+        clearCands()
     }
 
     private fun previousChineseWord(text: String): String {
@@ -339,7 +346,8 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         glideGeneration++
         if (mode == 2) finishGlide()
         if (sensitiveEditor) {
-            ic.commitText(c.lowercaseChar().toString(), 1)
+            // 密码框等敏感输入框保留大小写，否则无法输入大写字母
+            ic.commitText(c.toString(), 1)
             return
         }
         composing.append(c.lowercaseChar())
@@ -417,6 +425,11 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
     override fun onGlide(xs: FloatArray, ys: FloatArray, n: Int) {
         val ic = currentInputConnection ?: return
+        // 路径短到解码必无结果时视为点按，避免手指稍有滑动就吞字；敏感输入框同样适用
+        decoder.tapFallback(xs, ys, n)?.let {
+            onLetter(it)
+            return
+        }
         if (sensitiveEditor) return
         if (mode != 1) contextPreviousWord = previousChineseWord(ic.getTextBeforeCursor(32, 0)?.toString().orEmpty())
         settle()
