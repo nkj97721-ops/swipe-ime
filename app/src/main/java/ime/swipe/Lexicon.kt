@@ -12,6 +12,7 @@ class Lexicon {
     private var py: Array<String> = emptyArray()
     private var wd: Array<String> = emptyArray()
     private var wt: IntArray = IntArray(0)
+    private var lnw: FloatArray = FloatArray(0)
     var upy: Array<String> = emptyArray()
         private set
     var uw: IntArray = IntArray(0)
@@ -45,6 +46,7 @@ class Lexicon {
         py = rows.map { it.first }.toTypedArray()
         wd = rows.map { it.second }.toTypedArray()
         wt = rows.map { it.third }.toIntArray()
+        lnw = FloatArray(wt.size) { ln(1f + wt[it].toFloat()) }
 
         val unique = ArrayList<String>()
         val uniqueWeights = ArrayList<Int>()
@@ -118,10 +120,18 @@ class Lexicon {
         return lo
     }
 
-    private fun score(index: Int, inputLength: Int): Float =
-        ln(1f + wt[index].toFloat()) + if (py[index].length == inputLength) 2f else 0f
+    /**
+     * 候选得分：词频的对数，拼音长度正好等于输入的加分，
+     * 比输入多出的字母每个扣一点，避免很长的词组仅凭词频压过常用字。
+     */
+    private fun score(index: Int, inputLength: Int): Float {
+        val extra = maxOf(0, py[index].length - inputLength)
+        return lnw[index] + (if (py[index].length == inputLength) 2f else 0f) - 0.2f * extra
+    }
 
     private data class Match(val word: String, val used: Int, val score: Float)
+
+    private class Scored(val index: Int, val score: Float)
 
     private val fuzzyRules = listOf(
         "zh" to "z", "z" to "zh", "ch" to "c", "c" to "ch",
@@ -194,21 +204,32 @@ class Lexicon {
         if (input.isEmpty()) return emptyList()
         if (!ready) return fallbackCandidates(input)
         val matches = LinkedHashMap<String, Match>()
+        val fuzzyMatches = LinkedHashMap<String, Match>()
 
-        fun addPrefix(prefix: String, boost: Float, cap: Int) {
+        // 词库按拼音字母序排列，前缀区间里靠前的不一定是常用词（输入 w 时区间开头全是 wa..），
+        // 所以必须扫描整个前缀区间，只保留得分最高的 cap 条，而不是取区间开头的 cap 条。
+        fun addPrefix(prefix: String, boost: Float, cap: Int, into: MutableMap<String, Match>) {
+            val heap = java.util.PriorityQueue<Scored>(cap + 1) { a, b -> a.score.compareTo(b.score) }
             var index = lower(prefix)
-            var count = 0
-            while (index < py.size && count < cap && py[index].startsWith(prefix)) {
-                val candidate = Match(wd[index], input.length, score(index, input.length) + boost)
-                val old = matches[candidate.word]
-                if (old == null || candidate.score > old.score) matches[candidate.word] = candidate
+            while (index < py.size && py[index].startsWith(prefix)) {
+                val s = score(index, input.length) + boost
+                if (heap.size < cap) {
+                    heap.add(Scored(index, s))
+                } else if (s > heap.peek()!!.score) {
+                    heap.poll()
+                    heap.add(Scored(index, s))
+                }
                 index++
-                count++
+            }
+            for (entry in heap) {
+                val word = wd[entry.index]
+                val old = into[word]
+                if (old == null || entry.score > old.score) into[word] = Match(word, input.length, entry.score)
             }
         }
 
-        addPrefix(input, 2.5f, 300)
-        for (variant in fuzzyVariants(input)) addPrefix(variant, 0.35f, 60)
+        addPrefix(input, 2.5f, 60, matches)
+        for (variant in fuzzyVariants(input)) addPrefix(variant, 0.35f, 12, fuzzyMatches)
 
         if (input.length >= 2) {
             var keyIndex = initialKeys.binarySearch(input).let { if (it >= 0) it else -it - 1 }
@@ -227,6 +248,11 @@ class Lexicon {
         val out = matches.values.sortedByDescending { it.score }.take(32)
             .map { Cand(it.word, it.used) }.toMutableList()
         val seen = out.mapTo(HashSet()) { it.text }
+        // 模糊拼音只排在精确结果之后，否则输入 ni 会把 里、力 这些 li 的高频字插到 尼、泥 前面
+        for (match in fuzzyMatches.values.sortedByDescending { it.score }) {
+            if (out.size >= 40) break
+            if (seen.add(match.word)) out.add(Cand(match.word, match.used))
+        }
         var length = input.length - 1
         while (length >= 1 && out.size < 40) {
             val prefix = input.substring(0, length)
