@@ -26,6 +26,28 @@ class GlideDecoder(private val lex: Lexicon) {
         kw = keyWidth
     }
 
+    /**
+     * 路径短到 decode 一定没有结果时 (弧长小于 0.8 个键宽) 说明用户只是点按时手指稍有滑动，
+     * 返回起点最近的字母让调用方按点按处理；否则返回 null。
+     */
+    @Synchronized
+    fun tapFallback(xs: FloatArray, ys: FloatArray, n: Int): Char? {
+        if (n < 1) return null
+        var total = 0f
+        for (i in 1 until n) total += hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1])
+        if (total >= kw * 0.8f) return null
+        var best = 0
+        var bd = Float.MAX_VALUE
+        for (k in 0 until 26) {
+            val d = hypot(cx[k] - xs[0], cy[k] - ys[0])
+            if (d < bd) {
+                bd = d
+                best = k
+            }
+        }
+        return 'a' + best
+    }
+
     /** 重采样为 np 个等弧长点 返回总长度 */
     private fun resample(xs: FloatArray, ys: FloatArray, n: Int, ox: FloatArray, oy: FloatArray): Float {
         var total = 0f

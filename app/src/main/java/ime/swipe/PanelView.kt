@@ -9,6 +9,7 @@ import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -67,6 +68,29 @@ class PanelView(ctx: Context, private val cb: PanelView.Callback) : LinearLayout
         addView(sv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
     }
 
+    /**
+     * 输入法的 context 是 Service，直接 show 的对话框没有窗口令牌，会抛 BadTokenException。
+     * 这里把对话框挂到输入法窗口上；任何失败都吞掉，不让输入法进程崩溃。
+     */
+    private fun showDialog(builder: AlertDialog.Builder) {
+        try {
+            val dialog = builder.create()
+            val token = windowToken
+            dialog.window?.let { w ->
+                if (token != null) {
+                    val lp = w.attributes
+                    lp.token = token
+                    lp.type = WindowManager.LayoutParams.TYPE_APPLICATION_ATTACHED_DIALOG
+                    w.attributes = lp
+                }
+                w.addFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM)
+            }
+            dialog.show()
+        } catch (_: Exception) {
+            // 窗口令牌无效时放弃显示
+        }
+    }
+
     private fun showFullText(value: String) {
         val content = TextView(context)
         content.text = value
@@ -77,12 +101,13 @@ class PanelView(ctx: Context, private val cb: PanelView.Callback) : LinearLayout
 
         val scroll = ScrollView(context)
         scroll.addView(content, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        AlertDialog.Builder(context)
-            .setTitle("完整内容")
-            .setView(scroll)
-            .setPositiveButton("粘贴") { _, _ -> cb.onPanelPick(value) }
-            .setNegativeButton("关闭", null)
-            .show()
+        showDialog(
+            AlertDialog.Builder(context)
+                .setTitle("完整内容")
+                .setView(scroll)
+                .setPositiveButton("粘贴") { _, _ -> cb.onPanelPick(value) }
+                .setNegativeButton("关闭", null)
+        )
     }
 
     fun setBgAlpha(a: Int) {
@@ -170,12 +195,13 @@ class PanelView(ctx: Context, private val cb: PanelView.Callback) : LinearLayout
             info.setTextColor(Color.WHITE)
             info.textSize = 14f
             content.addView(info)
-            AlertDialog.Builder(context)
-                .setTitle(if (entry.mimeType?.startsWith("image/") == true) "图片预览" else "文件信息")
-                .setView(content)
-                .setPositiveButton("粘贴") { _, _ -> cb.onPanelPickClip(entry) }
-                .setNegativeButton("关闭", null)
-                .show()
+            showDialog(
+                AlertDialog.Builder(context)
+                    .setTitle(if (entry.mimeType?.startsWith("image/") == true) "图片预览" else "文件信息")
+                    .setView(content)
+                    .setPositiveButton("粘贴") { _, _ -> cb.onPanelPickClip(entry) }
+                    .setNegativeButton("关闭", null)
+            )
             return
         }
 
@@ -189,12 +215,13 @@ class PanelView(ctx: Context, private val cb: PanelView.Callback) : LinearLayout
         content.setPadding((20 * d).toInt(), (16 * d).toInt(), (20 * d).toInt(), (16 * d).toInt())
         val scroll = ScrollView(context)
         scroll.addView(content, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        AlertDialog.Builder(context)
-            .setTitle("完整内容")
-            .setView(scroll)
-            .setPositiveButton("粘贴") { _, _ -> cb.onPanelPickClip(entry) }
-            .setNegativeButton("关闭", null)
-            .show()
+        showDialog(
+            AlertDialog.Builder(context)
+                .setTitle("完整内容")
+                .setView(scroll)
+                .setPositiveButton("粘贴") { _, _ -> cb.onPanelPickClip(entry) }
+                .setNegativeButton("关闭", null)
+        )
     }
 
     private fun showEmpty(message: String) {
