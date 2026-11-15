@@ -87,6 +87,7 @@ class KeyboardView(
     private val path = Path()
 
     // 触摸状态
+    private var activeId = -1
     private var downKey: Key? = null
     private var pressedKey: Key? = null
     private var dx = 0f
@@ -343,10 +344,29 @@ class KeyboardView(
         }
     }
 
+    /** Shift 只对下一个字母生效，输入后自动恢复小写 */
+    private fun resetShift() {
+        if (uppercase) {
+            uppercase = false
+            buildKeys(width.toFloat(), height.toFloat())
+        }
+    }
+
+    /** 滑动距离太短、按点按处理的字母 (起点最近的键)，同样遵守 Shift 状态 */
+    private fun fireLetter(c: Char) {
+        performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        host.onLetter(if (uppercase) c.uppercaseChar() else c)
+        resetShift()
+        invalidate()
+    }
+
     private fun fire(k: Key) {
         performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         when (k.kind) {
-            Kind.LETTER -> host.onLetter(k.value[0])
+            Kind.LETTER -> {
+                host.onLetter(k.value[0])
+                resetShift()
+            }
             Kind.SHIFT -> { uppercase = !uppercase; buildKeys(width.toFloat(), height.toFloat()) }
             Kind.SPACE -> host.onSpace()
             Kind.ENTER -> host.onEnter()
@@ -361,114 +381,158 @@ class KeyboardView(
         invalidate()
     }
 
+    /** 指定手指在屏幕上的 Y 坐标；MotionEvent.getRawY(int) 需要 API 29，这里用偏移换算 */
+    private fun rawYOf(e: MotionEvent, idx: Int): Float = e.getY(idx) + (e.rawY - e.getY(0))
+
     override fun onTouchEvent(e: MotionEvent): Boolean {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                val k = findKey(e.x, e.y)
-                downKey = k
-                pressedKey = k
-                dx = e.x
-                dy = e.y
-                glide = false
-                swipedUp = false
-                fed = 0
-                n = 0
-                backspaceLongPressed = false
-                cursorJumpLongPressed = false
-                backspaceHandler.removeCallbacks(backspaceRepeat)
-                cursorJumpHandler.removeCallbacks(cursorJumpLongPress)
-                if (k != null && k.kind == Kind.TOOL && (k.value == "left" || k.value == "right")) {
-                    cursorJumpHandler.postDelayed(cursorJumpLongPress, 450L)
-                }
-                if (k != null && k.kind == Kind.SPACE) {
-                    spaceDownRawY = e.rawY
-                    spaceLastRawY = e.rawY
-                    spaceDragging = false
-                }
-                if (k != null && k.kind == Kind.BACK) {
-                    backspaceHandler.postDelayed(backspaceRepeat, 400L)
-                }
-                if (k != null && k.kind == Kind.LETTER) addPt(e.x, e.y, e.eventTime)
-                invalidate()
+                activeId = e.getPointerId(0)
+                handleDown(e.x, e.y, e.rawY, e.eventTime)
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                // 第二根手指落下时，先把前一根手指按抬起处理，再跟踪新手指，
+                // 这样双拇指快速打字不会丢键，也不会因指针 0 突然跳变而误触发滑行。
+                val old = e.findPointerIndex(activeId)
+                if (old >= 0) handleUp(e.getX(old), e.getY(old), e.eventTime)
+                val idx = e.actionIndex
+                activeId = e.getPointerId(idx)
+                handleDown(e.getX(idx), e.getY(idx), rawYOf(e, idx), e.eventTime)
             }
             MotionEvent.ACTION_MOVE -> {
-                val k = downKey ?: return true
-                if (k.kind == Kind.LETTER) {
-                    for (i in 0 until e.historySize) {
-                        addPt(e.getHistoricalX(i), e.getHistoricalY(i), e.getHistoricalEventTime(i))
-                    }
-                    addPt(e.x, e.y, e.eventTime)
-                    if (!glide && hypot(e.x - dx, e.y - dy) > gthr) {
-                        glide = true
-                        pressedKey = null
-                        trail.params = TrailParams.load(store)
-                        trail.down(px[0], py[0], pt[0])
-                        fed = 1
-                    }
-                    if (glide) {
-                        while (fed < n) {
-                            trail.move(px[fed], py[fed], pt[fed])
-                            fed++
-                        }
-                    }
-                } else if (k.kind == Kind.SPACE) {
-                    val dragDistance = e.rawY - spaceDownRawY
-                    if (!spaceDragging && kotlin.math.abs(dragDistance) > 3f * dp) {
-                        spaceDragging = true
-                        host.onKeyboardDrag(dragDistance)
-                    } else if (spaceDragging) {
-                        val delta = e.rawY - spaceLastRawY
-                        if (kotlin.math.abs(delta) >= 0.5f) host.onKeyboardDrag(delta)
-                    }
-                    spaceLastRawY = e.rawY
-                } else if (k.kind == Kind.COMMA) {
-                    if (dy - e.y > 0.45f * rowH) swipedUp = true
-                } else if (k.kind == Kind.TOOL && (k.value == "left" || k.value == "right")) {
-                    if (!k.hit(e.x, e.y)) cursorJumpHandler.removeCallbacks(cursorJumpLongPress)
-                } else if (k.kind == Kind.BACK) {
-                    val deltaY = e.y - dy
-                    if (k.hit(e.x, e.y) && kotlin.math.abs(deltaY) <= 0.35f * rowH) {
-                        // Keep repeating while the finger remains on the backspace key.
-                    } else {
-                        backspaceHandler.removeCallbacks(backspaceRepeat)
-                    }
+                val idx = e.findPointerIndex(activeId)
+                if (idx >= 0) handleMove(e, idx)
+            }
+            MotionEvent.ACTION_POINTER_UP -> {
+                val idx = e.actionIndex
+                if (e.getPointerId(idx) == activeId) {
+                    handleUp(e.getX(idx), e.getY(idx), e.eventTime)
+                    activeId = -1
                 }
-                invalidate()
             }
             MotionEvent.ACTION_UP -> {
-                val k = downKey
-                backspaceHandler.removeCallbacks(backspaceRepeat)
-                cursorJumpHandler.removeCallbacks(cursorJumpLongPress)
-                downKey = null
-                pressedKey = null
-                if (glide) {
-                    trail.up(e.eventTime)
-                    glide = false
-                    host.onGlide(px.copyOf(n), py.copyOf(n), n)
-                } else if (k != null && k.kind == Kind.BACK) {
-                    val deltaY = e.y - dy
-                    if (deltaY < -0.35f * rowH) host.onTool("clear")
-                    else if (deltaY > 0.35f * rowH) host.onTool("undo")
-                    else if (!backspaceLongPressed) host.onBackspace()
-                } else if (k != null) {
-                    val upKey = findKey(e.x, e.y)
-                    if (!cursorJumpLongPressed && !(k.kind == Kind.SPACE && spaceDragging) && (upKey === k || hypot(e.x - dx, e.y - dy) < gthr || k.kind == Kind.COMMA)) fire(k)
-                }
-                invalidate()
+                if (e.getPointerId(0) == activeId) handleUp(e.x, e.y, e.eventTime)
+                activeId = -1
             }
             MotionEvent.ACTION_CANCEL -> {
-                backspaceHandler.removeCallbacks(backspaceRepeat)
-                cursorJumpHandler.removeCallbacks(cursorJumpLongPress)
-                backspaceLongPressed = false
-                spaceDragging = false
-                cursorJumpLongPressed = false
-                if (glide) trail.up(e.eventTime)
-                glide = false
-                downKey = null
-                pressedKey = null
-                invalidate()
+                handleCancel(e.eventTime)
+                activeId = -1
             }
         }
         return true
+    }
+
+    private fun handleDown(x: Float, y: Float, rawY: Float, t: Long) {
+        val k = findKey(x, y)
+        downKey = k
+        pressedKey = k
+        dx = x
+        dy = y
+        glide = false
+        swipedUp = false
+        fed = 0
+        n = 0
+        backspaceLongPressed = false
+        cursorJumpLongPressed = false
+        backspaceHandler.removeCallbacks(backspaceRepeat)
+        cursorJumpHandler.removeCallbacks(cursorJumpLongPress)
+        if (k != null && k.kind == Kind.TOOL && (k.value == "left" || k.value == "right")) {
+            cursorJumpHandler.postDelayed(cursorJumpLongPress, 450L)
+        }
+        if (k != null && k.kind == Kind.SPACE) {
+            spaceDownRawY = rawY
+            spaceLastRawY = rawY
+            spaceDragging = false
+        }
+        if (k != null && k.kind == Kind.BACK) {
+            backspaceHandler.postDelayed(backspaceRepeat, 400L)
+        }
+        if (k != null && k.kind == Kind.LETTER) addPt(x, y, t)
+        invalidate()
+    }
+
+    private fun handleMove(e: MotionEvent, idx: Int) {
+        val k = downKey ?: return
+        val x = e.getX(idx)
+        val y = e.getY(idx)
+        if (k.kind == Kind.LETTER) {
+            for (i in 0 until e.historySize) {
+                addPt(e.getHistoricalX(idx, i), e.getHistoricalY(idx, i), e.getHistoricalEventTime(i))
+            }
+            addPt(x, y, e.eventTime)
+            if (!glide && hypot(x - dx, y - dy) > gthr) {
+                glide = true
+                pressedKey = null
+                trail.params = TrailParams.load(store)
+                trail.down(px[0], py[0], pt[0])
+                fed = 1
+            }
+            if (glide) {
+                while (fed < n) {
+                    trail.move(px[fed], py[fed], pt[fed])
+                    fed++
+                }
+            }
+        } else if (k.kind == Kind.SPACE) {
+            val rawY = rawYOf(e, idx)
+            val dragDistance = rawY - spaceDownRawY
+            if (!spaceDragging && kotlin.math.abs(dragDistance) > 3f * dp) {
+                spaceDragging = true
+                host.onKeyboardDrag(dragDistance)
+            } else if (spaceDragging) {
+                val delta = rawY - spaceLastRawY
+                if (kotlin.math.abs(delta) >= 0.5f) host.onKeyboardDrag(delta)
+            }
+            spaceLastRawY = rawY
+        } else if (k.kind == Kind.COMMA) {
+            if (dy - y > 0.45f * rowH) swipedUp = true
+        } else if (k.kind == Kind.TOOL && (k.value == "left" || k.value == "right")) {
+            if (!k.hit(x, y)) cursorJumpHandler.removeCallbacks(cursorJumpLongPress)
+        } else if (k.kind == Kind.BACK) {
+            val deltaY = y - dy
+            if (k.hit(x, y) && kotlin.math.abs(deltaY) <= 0.35f * rowH) {
+                // Keep repeating while the finger remains on the backspace key.
+            } else {
+                backspaceHandler.removeCallbacks(backspaceRepeat)
+            }
+        }
+        invalidate()
+    }
+
+    private fun handleUp(x: Float, y: Float, t: Long) {
+        val k = downKey
+        backspaceHandler.removeCallbacks(backspaceRepeat)
+        cursorJumpHandler.removeCallbacks(cursorJumpLongPress)
+        downKey = null
+        pressedKey = null
+        if (glide) {
+            trail.up(t)
+            glide = false
+            // 路径短到解码必无结果时，这只是手指稍有滑动的点按，按起点最近的字母输入
+            val tap = decoder.tapFallback(px, py, n)
+            if (tap != null) fireLetter(tap) else host.onGlide(px.copyOf(n), py.copyOf(n), n)
+        } else if (k != null && k.kind == Kind.BACK) {
+            val deltaY = y - dy
+            if (deltaY < -0.35f * rowH) host.onTool("clear")
+            else if (deltaY > 0.35f * rowH) host.onTool("undo")
+            else if (!backspaceLongPressed) host.onBackspace()
+        } else if (k != null) {
+            val upKey = findKey(x, y)
+            if (!cursorJumpLongPressed && !(k.kind == Kind.SPACE && spaceDragging) && (upKey === k || hypot(x - dx, y - dy) < gthr || k.kind == Kind.COMMA)) fire(k)
+        }
+        invalidate()
+    }
+
+    private fun handleCancel(t: Long) {
+        backspaceHandler.removeCallbacks(backspaceRepeat)
+        cursorJumpHandler.removeCallbacks(cursorJumpLongPress)
+        backspaceLongPressed = false
+        spaceDragging = false
+        cursorJumpLongPressed = false
+        if (glide) trail.up(t)
+        glide = false
+        downKey = null
+        pressedKey = null
+        invalidate()
     }
 }
