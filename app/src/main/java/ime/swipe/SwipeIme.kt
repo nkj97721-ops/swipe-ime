@@ -94,8 +94,12 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
                 // 词库读取失败时保持输入法可用；候选栏不会因后台异常导致服务崩溃。
             } finally {
                 mainHandler.post {
-                    if (!serviceDestroyed && mode == 1 && composing.isNotEmpty()) {
+                    if (serviceDestroyed) return@post
+                    if (mode == 1 && composing.isNotEmpty()) {
                         refreshTyped()
+                    } else if (mode == 0 && ::candRow.isInitialized) {
+                        // 清掉「词库加载中」的提示
+                        clearCands()
                     }
                 }
             }
@@ -178,20 +182,9 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         candidatesEnd: Int
     ) {
         super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
-        if (mode == 0) return
         // candidatesStart/candidatesEnd 不可靠，用它们判断拼音长度会误清空候选栏。
-        // 非折叠选区直接结束组合。
-        if (newSelStart != newSelEnd) {
-            resetComposition()
-            return
-        }
-        // 选区折叠时核对光标前的文字是否仍是正在组合的内容。
-        // 用户点击输入框其他位置移动光标后两者不一致，必须丢弃组合状态，
-        // 否则下一个字母会把旧拼音重新写到新位置。
-        val shown = if (mode == 1) composing.toString() else glideWords.firstOrNull().orEmpty()
-        if (shown.isEmpty()) return
-        val before = currentInputConnection?.getTextBeforeCursor(shown.length, 0)?.toString() ?: return
-        if (before != shown) resetComposition()
+        // 只在出现非折叠选区时结束组合。
+        if (mode != 0 && newSelStart != newSelEnd) resetComposition()
     }
 
     private fun resetComposition() {
@@ -255,6 +248,23 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         candRow.removeAllViews()
     }
 
+    /** 候选栏里显示一行灰色提示，让用户能看出是「没有结果」还是「词库没加载」，而不是一片空白 */
+    private fun showHint(text: String) {
+        candRow.removeAllViews()
+        val d = resources.displayMetrics.density
+        val tv = TextView(this)
+        tv.text = text
+        tv.setTextColor(Color.rgb(120, 120, 120))
+        tv.textSize = 16f
+        tv.gravity = Gravity.CENTER_VERTICAL
+        tv.setPadding((16 * d).toInt(), 0, (16 * d).toInt(), 0)
+        candRow.addView(
+            tv,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        )
+        candScroll.scrollTo(0, 0)
+    }
+
     private fun showCands(items: List<String>) {
         candRow.removeAllViews()
         val d = resources.displayMetrics.density
@@ -281,6 +291,11 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
             return
         }
         val base = lex.candidates(composing.toString())
+        if (base.isEmpty()) {
+            cands = emptyList()
+            showHint(if (lex.ready) "没有候选" else "词库加载中…")
+            return
+        }
         val contextScores = store.contextScores(contextPreviousWord, base.map { it.text })
         cands = if (contextScores.isEmpty()) base else base.withIndex()
             .sortedWith(compareByDescending<IndexedValue<Cand>> { contextScores[it.value.text] ?: 0 }.thenBy { it.index })
@@ -464,7 +479,11 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
                     emptyList()
                 }
                 mainHandler.post {
-                    if (serviceDestroyed || generation != glideGeneration || ic !== currentInputConnection || words.isEmpty()) return@post
+                    if (serviceDestroyed || generation != glideGeneration || ic !== currentInputConnection) return@post
+                    if (words.isEmpty()) {
+                        showHint(if (lex.ready) "没有识别到词，再滑一次" else "词库加载中…")
+                        return@post
+                    }
                     val contextScores = store.contextScores(contextPreviousWord, words)
                     glideWords = if (contextScores.isEmpty()) words else words.withIndex()
                         .sortedWith(compareByDescending<IndexedValue<String>> { contextScores[it.value] ?: 0 }.thenBy { it.index })
