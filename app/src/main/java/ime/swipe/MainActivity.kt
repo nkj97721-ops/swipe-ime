@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.provider.Settings
+import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
@@ -18,6 +19,7 @@ import kotlin.math.roundToInt
 class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Diag.init(this, false)
         val d = resources.displayMetrics.density
         val pad = (16 * d).toInt()
         val store = Store(this)
@@ -39,9 +41,31 @@ class MainActivity : Activity() {
             val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
             imm.showInputMethodPicker()
         }
+        val b3 = Button(this)
+        b3.text = "诊断信息"
         btns.addView(b1, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         btns.addView(b2, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        btns.addView(b3, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(btns)
+
+        // 点「诊断信息」显示输入法最近的状态和崩溃记录，截图发给开发者即可
+        val diag = TextView(this)
+        diag.setTextColor(Color.rgb(200, 200, 200))
+        diag.textSize = 12f
+        diag.setTextIsSelectable(true)
+        diag.setPadding(0, (6 * d).toInt(), 0, (6 * d).toInt())
+        val diagScroll = ScrollView(this)
+        diagScroll.addView(diag, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        diagScroll.visibility = View.GONE
+        root.addView(diagScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (220 * d).toInt()))
+        b3.setOnClickListener {
+            if (diagScroll.visibility == View.VISIBLE) {
+                diagScroll.visibility = View.GONE
+            } else {
+                diag.text = Diag.report(this)
+                diagScroll.visibility = View.VISIBLE
+            }
+        }
 
         val et = EditText(this)
         et.setTextColor(Color.WHITE)
