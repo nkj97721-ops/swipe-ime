@@ -79,6 +79,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
     override fun onCreate() {
         super.onCreate()
+        Diag.init(this, true)
         store = Store(this)
         clips = store.getClipEntries()
         cleanupClipboardFiles()
@@ -88,10 +89,14 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         clipboardManager = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboardManager?.addPrimaryClipChangedListener(clipListener)
         Thread {
+            val startedAt = SystemClock.uptimeMillis()
+            Diag.lexStatus = "加载中…"
             try {
                 lex.load(applicationContext)
-            } catch (_: Exception) {
-                // 词库读取失败时保持输入法可用；候选栏不会因后台异常导致服务崩溃。
+                Diag.lexStatus = "已加载，共 " + lex.upy.size + " 个拼音，用时 " + (SystemClock.uptimeMillis() - startedAt) + " 毫秒"
+            } catch (e: Throwable) {
+                // 词库读取失败 (包括内存不足) 时保持输入法可用；候选栏不会因后台异常导致服务崩溃。
+                Diag.lexStatus = "加载失败: " + e.javaClass.simpleName + " " + e.message
             } finally {
                 mainHandler.post {
                     if (serviceDestroyed) return@post
@@ -162,6 +167,10 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         val editorInfo = info ?: currentInputEditorInfo
         sensitiveEditor = isSensitiveEditor(editorInfo)
         noLearning = isNoLearningEditor(editorInfo)
+        Diag.editor = "包名 " + editorInfo?.packageName +
+            "，inputType 0x" + Integer.toHexString(editorInfo?.inputType ?: 0) +
+            "，imeOptions 0x" + Integer.toHexString(editorInfo?.imeOptions ?: 0) +
+            "，密码框 " + sensitiveEditor + "，无痕 " + noLearning
         contextPreviousWord = ""
         composing.setLength(0)
         mode = 0
@@ -286,11 +295,13 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
 
     private fun refreshTyped() {
         if (sensitiveEditor) {
+            Diag.typed = "密码框，不显示候选"
             cands = emptyList()
             clearCands()
             return
         }
         val base = lex.candidates(composing.toString())
+        Diag.typed = "拼音 " + composing + "，候选 " + base.size + " 个，词库就绪 " + lex.ready
         if (base.isEmpty()) {
             cands = emptyList()
             showHint(if (lex.ready) "没有候选" else "词库加载中…")
@@ -369,6 +380,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
     // ---------- 键盘事件 ----------
 
     override fun onLetter(c: Char) {
+        Diag.typed = "收到字母 " + c + "，输入连接 " + (currentInputConnection != null)
         val ic = currentInputConnection ?: return
         if (composing.isEmpty() && !sensitiveEditor && !noLearning) contextPreviousWord = previousChineseWord(ic.getTextBeforeCursor(32, 0)?.toString().orEmpty())
         glideGeneration++
@@ -455,6 +467,7 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
         val ic = currentInputConnection ?: return
         // 路径短到解码必无结果时视为点按，避免手指稍有滑动就吞字；敏感输入框同样适用
         decoder.tapFallback(xs, ys, n)?.let {
+            Diag.glide = "路径太短，按点按处理"
             onLetter(it)
             return
         }
@@ -474,8 +487,10 @@ class SwipeIme : InputMethodService(), KeyboardView.Host, PanelView.Callback {
                             if (!found.contains(word)) found.add(word)
                         }
                     }
+                    Diag.glide = "路径点数 " + n + "，命中拼音 " + hits.size + " 个，候选词 " + found.size + " 个，词库就绪 " + lex.ready
                     found
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    Diag.glide = "解码异常 " + e
                     emptyList()
                 }
                 mainHandler.post {
